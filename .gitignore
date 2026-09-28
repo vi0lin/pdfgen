@@ -1,4 +1,6 @@
 builds/
+!builds/exe/pdfgen.exe
+!builds/deb/pdfgen
 external/
 pdf.zip
 *.o

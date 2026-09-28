@@ -120,6 +120,11 @@ image.h/.cpp      JPEG (embedded verbatim), PNG (full decode incl. palette
 pdfwriter.h/.cpp  raw PDF 1.4: objects, xref, pages, content streams, fonts
 ```
 
+A complete, self-demonstrating syntax reference ships in `Syntax/Syntax.txt`
+(with its demo assets): every tag is explained AND shown live — render it
+with `pdfgen Syntax.txt` and read the resulting `Syntax.pdf` side by side
+with the source. Literal square brackets in text are written `\[` `\]`.
+
 ## Backslash line-tag syntax
 
 Every whole-line `[tag, params]` also exists as `\<letter-or-word>` at the
@@ -134,7 +139,7 @@ bracket form.
 | `\t grid=on, widths=2:1` … `\\t` | block-style table (see below) |
 | `\r spacing=4*mm, pagebreak` | `[row, ...]` |
 | `\g` / `\\g` | `[group]` / `[/group]` |
-| `@` | group separator: closes the previous group and opens the next (works between table rows AND between ordinary flowables — keeps e.g. name + signature together on one page) |
+| `@` | group separator: closes the previous group and opens the next (works between table rows AND between ordinary flowables — keeps e.g. name + signature together on one page). Outside tables a group also ends automatically at the next structural element (heading, table, page break, margins change, merged PDF), so a trailing `@` can never swallow the rest of the document. |
 | `\s 3` / `\s 5*mm` | vertical space: bare number = that many body text lines (16 pt each), with a unit = that dimension |
 | `\n` / `\n no_blank` | `[newpage]` / `[newpage, no_blank]` |
 | `\m left=2*cm` | `[margins, ...]` |
