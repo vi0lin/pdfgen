@@ -8,3 +8,7 @@ pdfgen
 # echte Zugangsdaten niemals einchecken
 pdfgen.conf
 *.unreleased
+
+.xbm-sync/
+.xbm-run.sh
+.xbm-exec.sh
