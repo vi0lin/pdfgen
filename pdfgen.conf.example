@@ -1,0 +1,19 @@
+# pdfgen.conf -- Absenderkonten fuer den Mailversand.
+# Liegt neben der pdfgen-Binary oder wird mit  -c /pfad/zur/datei  angegeben.
+# In pdfgen.conf umbenennen und ausfuellen. NICHT einchecken.
+#
+# [anbieter default]  -> Standardkonto (wird ohne from= benutzt)
+# 1. Zeile: Adresse, 2. Zeile: App-Passwort (Leerzeichen werden entfernt)
+# Google: Konto -> Sicherheit -> 2-Faktor -> App-Passwoerter
+
+[gmail default]
+ich@gmail.com
+abcd efgh ijkl mnop
+
+[gmail]
+zweitkonto@gmail.com
+qrst uvwx yzab cdef
+
+# Empfaenger fuer --mail-test, wenn die [mail]-Definition kein test= hat
+[test]
+test@example.com

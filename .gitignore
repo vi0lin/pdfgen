@@ -1,0 +1,8 @@
+builds/
+external/
+pdf.zip
+*.o
+pdfgen
+# echte Zugangsdaten niemals einchecken
+pdfgen.conf
+*.unreleased
