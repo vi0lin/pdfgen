@@ -1,8 +1,8 @@
 > [!WARNING]
-> Its not tested as major changes have been applied yesterday.
+> Its not yet as major changes have been applied yesterday.
 
 # pdfgen — C++ port of pdfgen.py
-
+A pdf generator with its own syntax and easy c and c++ integration in c and c++ plus mail delivery 
 Generates `DIR/Bewerbung.pdf` from `DIR/{sender.txt, receiver.txt, text.txt}`,
 writing the PDF file format directly. No PDF library needed; dependencies are
 **zlib** (PNG decoding / Flate compression, preinstalled virtually everywhere)
