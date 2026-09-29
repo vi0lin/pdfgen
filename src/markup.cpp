@@ -15,7 +15,7 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: it lacks PDFGEN_MARKUP_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_MARKUP_API != 13
+#elif PDFGEN_MARKUP_API != 14
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
@@ -77,6 +77,14 @@ bool tryParseImageTag(const std::string& s, size_t pos, Token& tok, size_t& end)
     if (eq == std::string::npos) return false;
     std::string key = toLower(trim(parts[i].substr(0, eq)));
     std::string val = trim(parts[i].substr(eq + 1));
+    if (key == "align" || key == "ausrichtung") {
+      std::string a = toLower(val);
+      if      (a == "left"   || a == "links")  tok.align = 0;
+      else if (a == "center" || a == "mitte")  tok.align = 1;
+      else if (a == "right"  || a == "rechts") tok.align = 2;
+      else return false;
+      continue;
+    }
     if (key == "float") {
       std::string side = toLower(val);
       if      (side == "left")  tok.floatSide = 1;
@@ -351,9 +359,207 @@ std::string translateBackslashTags(const std::string& text,
   return out;
 }
 
+// \[ and \] produce literal brackets: swapped to sentinel bytes here so no
+// pipeline stage (includes, dates, tokenizer, cells) can mistake them for a
+// tag, and swapped back just before the text reaches a paragraph.
+static std::string escapeLiteralBrackets(const std::string& text) {
+  std::string out;
+  for (size_t i = 0; i < text.size(); ++i) {
+    if (text[i] == '\\' && i + 1 < text.size() &&
+        (text[i + 1] == '[' || text[i + 1] == ']')) {
+      out += text[i + 1] == '[' ? '\x01' : '\x02';
+      ++i;
+    } else out += text[i];
+  }
+  return out;
+}
+
+std::string unescapeLiteralBrackets(const std::string& text) {
+  std::string out;
+  for (char c : text) {
+    if (c == '\x01') out += '[';
+    else if (c == '\x02') out += ']';
+    else out += c;
+  }
+  return out;
+}
+
+// ---- styles / mementos / forward -------------------------------------------------
+namespace {
+
+using ParamList = std::vector<std::pair<std::string, std::string>>;
+
+// comma split honoring double quotes
+std::vector<std::string> splitParams(const std::string& inner) {
+  std::vector<std::string> parts;
+  std::string cur;
+  bool inQ = false;
+  for (char c : inner) {
+    if (c == '"') inQ = !inQ;
+    if (c == ',' && !inQ) { parts.push_back(trim(cur)); cur.clear(); }
+    else cur += c;
+  }
+  parts.push_back(trim(cur));
+  return parts;
+}
+
+void applyParam(ParamList& eff, const std::string& key, const std::string& val) {
+  for (auto& kv : eff)
+    if (kv.first == key) { kv.second = val; return; }
+  eff.push_back({key, val});
+}
+
+struct StyleState {
+  std::map<std::string, ParamList> mementos;
+  std::map<std::string, ParamList> forwardCache;   // per element kind
+};
+
+// Applies forward/style/name/clean to ONE tag's parameter list.
+ParamList resolveStyledParams(const std::string& kind,
+                              const std::vector<std::string>& rawParams,
+                              StyleState& st,
+                              std::vector<std::string>& warnings) {
+  bool hasClean = false, hasForward = false;
+  std::string mementoName;
+  // pre-scan for clean (it decides the base)
+  for (const auto& p : rawParams)
+    if (toLower(p) == "clean") hasClean = true;
+
+  ParamList eff;
+  if (!hasClean) {
+    auto it = st.forwardCache.find(kind);
+    if (it != st.forwardCache.end()) eff = it->second;
+  }
+  for (const auto& p : rawParams) {
+    if (p.empty()) continue;
+    size_t eq = p.find('=');
+    std::string key = toLower(trim(eq == std::string::npos ? p : p.substr(0, eq)));
+    std::string val = eq == std::string::npos ? "" : trim(p.substr(eq + 1));
+    if (key == "clean")   continue;
+    if (key == "forward") { hasForward = true; continue; }
+    if (key == "name")    { mementoName = val; continue; }
+    if (key == "style" || key == "stil") {
+      auto it = st.mementos.find(val);
+      if (it == st.mementos.end())
+        warnings.push_back("style '" + val + "' is not defined (yet)");
+      else
+        for (const auto& kv : it->second) applyParam(eff, kv.first, kv.second);
+      continue;
+    }
+    applyParam(eff, key, val);
+  }
+  if (hasClean)   st.forwardCache[kind].clear();
+  if (hasForward) st.forwardCache[kind] = eff;      // accumulative by design
+  if (!mementoName.empty()) st.mementos[mementoName] = eff;
+  return eff;
+}
+
+std::string joinStyled(const std::string& head, const ParamList& eff) {
+  std::string out = head;
+  for (const auto& kv : eff) {
+    out += out.empty() ? "" : ", ";
+    out += kv.second.empty() ? kv.first : kv.first + "=" + kv.second;
+  }
+  return out;
+}
+
+bool looksLikeImageHead(const std::string& head) {
+  std::string low = toLower(head);
+  for (const char* ext : {".png", ".jpg", ".jpeg", ".webp", ".bmp"}) {
+    size_t n = std::strlen(ext);
+    if (low.size() > n && low.compare(low.size() - n, n, ext) == 0) return true;
+  }
+  return false;
+}
+
+} // namespace
+
+// Rewrites every whole-line tag applying forward/style=/name=/clean.
+std::string applyStyles(const std::string& text,
+                        std::vector<std::string>& warnings) {
+  StyleState st;
+  std::vector<std::string> lines;
+  {
+    std::stringstream ss(text);
+    std::string l;
+    while (std::getline(ss, l)) {
+      if (!l.empty() && l.back() == '\r') l.pop_back();
+      lines.push_back(l);
+    }
+  }
+  std::string out;
+  auto emit = [&](const std::string& l) { out += l; out += '\n'; };
+
+  for (size_t li = 0; li < lines.size(); ++li) {
+    std::string t = trim(lines[li]);
+
+    // native \t table start (single backslash!)
+    if (t.size() >= 2 && t[0] == '\\' && t[1] != '\\') {
+      std::string low = toLower(t);
+      bool isT = low == "\\t" || low.rfind("\\t ", 0) == 0 ||
+                 low.rfind("\\t,", 0) == 0 ||
+                 low.rfind("\\table", 0) == 0 || low.rfind("\\tabelle", 0) == 0;
+      bool isLoop = low.rfind("\\loop", 0) == 0;
+      if (isT || isLoop) {
+        size_t sp = t.find_first_of(" ,");
+        std::string word = sp == std::string::npos ? t : t.substr(0, sp);
+        std::string rest = sp == std::string::npos ? "" : trim(t.substr(sp + 1));
+        if (!rest.empty() && rest[0] == ',') rest = trim(rest.substr(1));
+        auto parts = splitParams(rest);
+        std::string head;
+        std::string kind = isT ? "table" : "loop";
+        if (isLoop && !parts.empty() &&
+            parts[0].find('=') == std::string::npos && !parts[0].empty()) {
+          head = parts[0];                          // loop data file
+          parts.erase(parts.begin());
+        }
+        ParamList eff = resolveStyledParams(kind, parts, st, warnings);
+        std::string joined = joinStyled(head, eff);
+        emit(joined.empty() ? word : word + " " + joined);
+        continue;
+      }
+      emit(lines[li]);
+      continue;
+    }
+
+    // whole-line bracket tag (may span lines until its ']')
+    if (!t.empty() && t[0] == '[' && t.rfind("[/", 0) != 0) {
+      std::string tagText = t;
+      size_t consumedTo = li;
+      while (tagText.find(']') == std::string::npos && consumedTo + 1 < lines.size()) {
+        ++consumedTo;
+        tagText += " " + trim(lines[consumedTo]);
+      }
+      size_t close = tagText.find(']');
+      if (close != std::string::npos && close == tagText.size() - 1) {
+        std::string inner = tagText.substr(1, tagText.size() - 2);
+        auto parts = splitParams(inner);
+        std::string head = parts.empty() ? "" : parts[0];
+        if (!parts.empty()) parts.erase(parts.begin());
+        std::string kind;
+        {
+          size_t eq = head.find('=');
+          kind = toLower(trim(eq == std::string::npos ? head : head.substr(0, eq)));
+          if (looksLikeImageHead(eq == std::string::npos ? head : head.substr(0, eq)) ||
+              looksLikeImageHead(head))
+            kind = "image";
+        }
+        ParamList eff = resolveStyledParams(kind, parts, st, warnings);
+        emit("[" + joinStyled(head, eff) + "]");
+        li = consumedTo;
+        continue;
+      }
+    }
+    emit(lines[li]);
+  }
+  if (!text.empty() && text.back() != '\n' && !out.empty()) out.pop_back();
+  return out;
+}
+
 std::string preprocessSource(const std::string& text, bool embedded,
                              std::vector<std::string>& warnings) {
-  std::stringstream ss(translateBackslashTags(text, warnings));
+  std::stringstream ss(applyStyles(
+      escapeLiteralBrackets(translateBackslashTags(text, warnings)), warnings));
   std::string line, out;
   bool skipTableRows = false;
   std::vector<bool> condStack;                   // \c blocks
@@ -754,13 +960,7 @@ bool fileCreationTime(const std::string& path, std::time_t& out) {
   out = (std::time_t)((u.QuadPart - 116444736000000000ULL) / 10000000ULL);
   return true;
 #else
-  // statx: glibc >= 2.28 (dann ist STATX_BTIME definiert) und Android erst
-  // ab API 30. Darunter DEKLARIERT bionic die Funktion nicht -- es gibt nur
-  // "struct statx" aus <linux/stat.h>, und statx(...) wird zum Versuch, diese
-  // Struktur mit 5 Argumenten zu konstruieren ("no matching constructor for
-  // initialization of 'statx'"). Die App baut mit minSdk 26 -> stat() nehmen.
-#if defined(__linux__) && defined(STATX_BTIME) && \
-    (!defined(__ANDROID__) || __ANDROID_API__ >= 30)
+#ifdef __linux__
   struct statx stx;
   if (statx(AT_FDCWD, path.c_str(), 0, STATX_BTIME | STATX_MTIME, &stx) == 0) {
     if (stx.stx_mask & STATX_BTIME) { out = stx.stx_btime.tv_sec; return true; }
@@ -1129,6 +1329,7 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
         std::string rest = sp == std::string::npos ? "" : trim(bt.substr(sp + 1));
         pdf::TableOpts to;
         std::string optLine = rest.empty() ? "[table]" : "[table, " + rest + "]";
+        closeFlowGroup();
         pendingTable = Token{};
         pendingTable.kind = Token::Kind::Table;
         if (tryParseTableOpts(optLine, to, warnings))
@@ -1204,6 +1405,7 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
           }
           if (valid) {
             flushTable(); flushText();
+            closeFlowGroup();
             tokens.push_back(std::move(tk));
             continue;
           }
@@ -1282,6 +1484,7 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
           if (k == "bottom" || k == "unten") setDim(v, 3);
         }
         flushTable(); flushText();
+        closeFlowGroup();
         tokens.push_back(std::move(tk));
         continue;
       }
@@ -1370,6 +1573,7 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
             nb = true;
         }
         flushTable(); flushText();
+        closeFlowGroup();
         if (src.empty()) {
           warnings.push_back("[pdfgen, include] needs a source file: [pdfgen=Quelle.txt, include]");
         } else {
@@ -1395,6 +1599,7 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
     if (!trim(line).empty() && trim(line)[0] == '|') {   // table row line
       flushText();
       if (!inTable) {
+        closeFlowGroup();
         pendingTable = Token{};
         pendingTable.kind = Token::Kind::Table;
         if (haveOpts) {
@@ -1432,6 +1637,7 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
     std::string title;
     if (int lvl = headingLevel(line, title)) {      // heading line
       flushText();
+      closeFlowGroup();
       Token tk; tk.kind = Token::Kind::Heading; tk.text = title; tk.level = lvl;
       tokens.push_back(std::move(tk));
       continue;
@@ -1541,6 +1747,8 @@ static pdf::FlowList buildFlowablesInner(const std::vector<Token>& tokens,
     if (t.hasAbs) img->setAbsolute(t.absX, t.absY);
     img->setOffset(t.dx, t.dy);
     img->setBackLayer(t.layerBack);
+    if (t.align == 1) img->setAlign(pdf::Align::Center);
+    if (t.align == 2) img->setAlign(pdf::Align::Right);
     return img;
   };
 
@@ -1585,6 +1793,7 @@ static pdf::FlowList buildFlowablesInner(const std::vector<Token>& tokens,
         // detection in tokenize() never sees cell content); the cell's
         // column alignment is kept
         std::string title;
+        segs[k].text = unescapeLiteralBrackets(segs[k].text);
         if (int lvl = headingLevel(segs[k].text, title)) {
           Style hs = styles::heading(lvl);
           hs.align = st.align;
@@ -1619,7 +1828,8 @@ static pdf::FlowList buildFlowablesInner(const std::vector<Token>& tokens,
     const Token& t = tokens[i];
     switch (t.kind) {
       case Token::Kind::Text: {
-        out.push_back(std::make_unique<Paragraph>(t.text, styles::body()));
+        out.push_back(std::make_unique<Paragraph>(
+            unescapeLiteralBrackets(t.text), styles::body()));
         // a directly following table with its own spacing= governs the gap
         bool nextTableWithSpacing =
             i + 1 < tokens.size() && tokens[i + 1].kind == Token::Kind::Table &&
@@ -1630,7 +1840,8 @@ static pdf::FlowList buildFlowablesInner(const std::vector<Token>& tokens,
       }
 
       case Token::Kind::Heading:
-        out.push_back(std::make_unique<Paragraph>(t.text, styles::heading(t.level)));
+        out.push_back(std::make_unique<Paragraph>(
+            unescapeLiteralBrackets(t.text), styles::heading(t.level)));
         break;
 
       case Token::Kind::Image: {

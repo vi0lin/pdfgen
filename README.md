@@ -150,6 +150,21 @@ bracket form.
 | `\mail Name, to=…` / `\attach mail=…, file=…` | `[mail=Name, …]` / `[attach, …]` |
 | `\c embedded` … `\\c` | conditional block: the lines in between render only when the condition holds (`embedded` / `!embedded`, nestable). `condition=` stays available on every tag. |
 
+**Styles / mementos / forward** (works for the parameters of EVERY element —
+tables incl. legacy `[table]`, images, `\r`, `\m`, `\e`, `\p`, project tags):
+`name=Stil1` stores the element's EFFECTIVE parameter set; `style=Stil1`
+loads it at exactly that position in the list (parameters before `style=`
+are overridden by the style, parameters after it override the style);
+`forward` additionally merges the effective values into a per-element-type
+cache so every FOLLOWING element of that type inherits them automatically
+(accumulative); `clean` ignores that cache and clears it. Merge order:
+forward cache → params before `style=` → style values → params after
+(later wins). A document-leading `[margins]`/`\m` line still sets the base
+page layout; a margins tag after any content now always acts as an in-flow
+change from that point (this also fixed a subtle bug where a mid-document
+margins tag was hoisted to the whole document). Styles live per source file;
+embedded/included files have their own scope.
+
 **Loops over data files:** `\loop werte.txt, D=\n\n` … `\\loop` repeats the
 body once per record. Records are separated by the delimiter `D` (escapes
 `\n` `\t` `\\`; default `\n\n` = blank line — with `D=\n` every line is its

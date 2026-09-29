@@ -145,6 +145,23 @@ Zurück im Hauptdokument, wieder mit Standardrändern.
 
 ›  \pdfgen Quelle.txt, file=Name.pdf‹ beendet das aktuelle Dokument und startet das nächste (ohne Quelle: die folgenden Zeilen sind der Inhalt; margins=… setzt dessen Ränder). ›\mail Name, to=a@x b@y, cc=…, attachment=…, test=…‹ definiert eine E-Mail: erste Zeile danach = Betreff, Rest bis zum nächsten Tag = Text; ›\attach mail=Name, file=X.pdf‹ hängt weitere Dateien an. Versand: ›pdfgen . --mail‹ (alle), ›--mail Name1 Name2‹ (Auswahl), ›--mail-test‹ (nur an die test=-Adresse, Betreff mit \[TEST\]-Präfix). Ohne jegliche Projekt-Tags gilt: Verzeichnis → Bewerbung.pdf, ›pdfgen Beispiel.txt‹ → Beispiel.pdf. Am Ende dieser Datei folgt live ein zweites Dokument samt Mail-Definition — deshalb existiert nach dem Rendern auch SyntaxTeil.pdf.
 
+## 14. Styles: forward, style=, name=, clean
+
+Jedes Element kann seine Parameter wiederverwendbar machen. ›name=Stil1‹ speichert den <b>effektiven</b> Parametersatz als Memento; ›style=Stil1‹ lädt ihn an genau dieser Position der Liste — Parameter <b>vor</b> style= werden vom Style überschrieben, Parameter <b>danach</b> überschreiben den Style. ›forward‹ merkt die effektiven Werte zusätzlich akkumulativ pro Elementtyp vor: jedes <b>folgende</b> Element desselben Typs erbt sie automatisch als Basis. ›clean‹ ignoriert den Forward-Speicher und leert ihn — ab hier ist die Weitergabe beendet. Das funktioniert für alle Elemente (Tabellen, Bilder, Zeilen-, Rand-, Embed- und PDF-Tags); Styles gelten je Quelldatei. Live:
+
+\t forward, grid=on, widths=2:1, name=basis
+| Erste Tabelle | definiert grid, widths und den Style ›basis‹ |
+\\t
+\t
+| Zweite Tabelle | erbt beides automatisch per forward |
+\\t
+\t style=basis, widths=1:2
+| Dritte | lädt ›basis‹, überschreibt danach die Spalten auf 1:2 |
+\\t
+\t clean
+| Vierte | clean: ohne Vererbung, forward ab hier beendet |
+\\t
+
 Damit ist jeder Tag einmal erklärt und vorgeführt. Diese Quelldatei selbst ist das beste Beispiel: einfach neben die eigene text.txt legen und nachschlagen.
 \pdfgen file=SyntaxTeil.pdf
 # Zweites Dokument aus derselben Quelle
