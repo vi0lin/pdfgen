@@ -152,6 +152,7 @@ struct Token {
   std::vector<std::vector<int>> spans;         // Table: column span per cell
   std::vector<int> aligns;                     // Table: 0 left, 1 center, 2 right
   int align = 0;                               // Image: 0 left, 1 center, 2 right (API 14)
+  int align = 0;                               // Image: 0 left, 1 center, 2 right (API 14)
   int headerRows = 0;                          // Table: leading bold rows
   pdf::TableOpts topts;                        // Table: layout options
   int blankLines = 1;                          // ParagraphEnd: gap multiplier
