@@ -960,7 +960,7 @@ bool fileCreationTime(const std::string& path, std::time_t& out) {
   out = (std::time_t)((u.QuadPart - 116444736000000000ULL) / 10000000ULL);
   return true;
 #else
-#ifdef __linux__
+#if defined(__linux__) && (!defined(__ANDROID__) || __ANDROID_API__ >= 30)
   struct statx stx;
   if (statx(AT_FDCWD, path.c_str(), 0, STATX_BTIME | STATX_MTIME, &stx) == 0) {
     if (stx.stx_mask & STATX_BTIME) { out = stx.stx_btime.tv_sec; return true; }
