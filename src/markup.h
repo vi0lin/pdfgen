@@ -1,4 +1,4 @@
-// markup.h — text.txt parsing, restructured as a flat two-stage pipeline.
+/ markup.h — text.txt parsing, restructured as a flat two-stage pipeline.
 //
 // The Python original nested parse_images → parse_headings → parse_datum
 // inside each other, which made the control flow hard to follow (and hid a
@@ -151,7 +151,6 @@ struct Token {
   std::vector<std::vector<std::string>> rows;  // Table: cell markup per row
   std::vector<std::vector<int>> spans;         // Table: column span per cell
   std::vector<int> aligns;                     // Table: 0 left, 1 center, 2 right
-  int align = 0;                               // Image: 0 left, 1 center, 2 right (API 14)
   int align = 0;                               // Image: 0 left, 1 center, 2 right (API 14)
   int headerRows = 0;                          // Table: leading bold rows
   pdf::TableOpts topts;                        // Table: layout options
