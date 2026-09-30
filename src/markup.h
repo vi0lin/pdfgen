@@ -118,7 +118,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_MARKUP_API 13
+#define PDFGEN_MARKUP_API 14
 #include <functional>
 #include <string>
 #include <vector>
@@ -151,6 +151,7 @@ struct Token {
   std::vector<std::vector<std::string>> rows;  // Table: cell markup per row
   std::vector<std::vector<int>> spans;         // Table: column span per cell
   std::vector<int> aligns;                     // Table: 0 left, 1 center, 2 right
+  int align = 0;                               // Image: 0 left, 1 center, 2 right (API 14)
   int headerRows = 0;                          // Table: leading bold rows
   pdf::TableOpts topts;                        // Table: layout options
   int blankLines = 1;                          // ParagraphEnd: gap multiplier
