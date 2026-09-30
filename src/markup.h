@@ -1,4 +1,4 @@
-/ markup.h — text.txt parsing, restructured as a flat two-stage pipeline.
+// markup.h — text.txt parsing, restructured as a flat two-stage pipeline.
 //
 // The Python original nested parse_images → parse_headings → parse_datum
 // inside each other, which made the control flow hard to follow (and hid a
