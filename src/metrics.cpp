@@ -4,12 +4,12 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_METRICS_API
 #error "stale metrics.h: it lacks PDFGEN_METRICS_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_METRICS_API != 1
+#elif PDFGEN_METRICS_API != 2
 #error "version mismatch in metrics.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_PDFWRITER_API
 #error "stale pdfwriter.h: it lacks PDFGEN_PDFWRITER_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_PDFWRITER_API != 6
+#elif PDFGEN_PDFWRITER_API != 7
 #error "version mismatch in pdfwriter.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 
@@ -46,6 +46,8 @@ static char baseLetter(unsigned char code) {
 }
 
 int glyphWidth(Font f, unsigned char code) {
+  if (f == Font::Courier) return 600;             // monospaced
+
   bool bold = (f == Font::HelveticaBold || f == Font::HelveticaBoldOblique);
   const int* tab = bold ? kHelvBold : kHelv;
 

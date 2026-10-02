@@ -14,7 +14,7 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_PDFWRITER_API
 #error "stale pdfwriter.h: it lacks PDFGEN_PDFWRITER_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_PDFWRITER_API != 6
+#elif PDFGEN_PDFWRITER_API != 7
 #error "version mismatch in pdfwriter.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_TTFFONT_API
@@ -32,6 +32,7 @@ const char* fontBaseName(Font f) {
     case Font::HelveticaBold:        return "Helvetica-Bold";
     case Font::HelveticaOblique:     return "Helvetica-Oblique";
     case Font::HelveticaBoldOblique: return "Helvetica-BoldOblique";
+    case Font::Courier:              return "Courier";
   }
   return "Helvetica";
 }
@@ -40,6 +41,7 @@ const char* fontResourceName(Font f) {
     case Font::Helvetica:            return "F1";
     case Font::HelveticaBold:        return "F2";
     case Font::HelveticaOblique:     return "F3";
+    case Font::Courier:              return "F5";
     case Font::HelveticaBoldOblique: return "F4";
   }
   return "F1";
@@ -63,6 +65,12 @@ void Writer::content(const std::string& ops) {
 void Writer::contentBack(const std::string& ops) {
   if (slots_.empty() || slots_.back().extDoc >= 0) beginPage();
   slots_.back().back += ops;
+}
+
+void Writer::addLink(double x, double y, double w, double h,
+                     const std::string& url) {
+  if (slots_.empty() || slots_.back().extDoc >= 0 || url.empty()) return;
+  slots_.back().links.push_back({x, y, w, h, url});
 }
 
 void Writer::discardCurrentOwnPage() {
@@ -122,7 +130,7 @@ bool Writer::buildDocument(std::string& result) {
   // Object layout:
   //   1            Catalog
   //   2            Pages
-  //   3..6         Fonts F1..F4
+  //   3..7         Fonts F1..F5 (F5 = Courier for code spans)
   //   then per image: XObject (+ optional SMask object)
   //   then per page: Page dict + content stream
   std::vector<Obj> objs;
@@ -130,7 +138,7 @@ bool Writer::buildDocument(std::string& result) {
   addObject(objs, "<< /Type /Catalog /Pages 2 0 R >>");  // obj 1, /Kids patched below
   int pagesObjIdx = addObject(objs, "");                 // obj 2, filled last
 
-  for (int i = 0; i < 4; ++i) {
+  for (int i = 0; i < 5; ++i) {
     std::ostringstream f;
     f << "<< /Type /Font /Subtype /Type1 /BaseFont /" << fontBaseName((Font)i)
       << " /Encoding /WinAnsiEncoding >>";
@@ -266,7 +274,7 @@ bool Writer::buildDocument(std::string& result) {
   // shared /Resources dictionary text
   std::ostringstream res;
   res << "/Resources << /Font << ";
-  for (int i = 0; i < 4; ++i)
+  for (int i = 0; i < 5; ++i)
     res << "/" << fontResourceName((Font)i) << " " << (3 + i) << " 0 R ";
   if (fu1Obj) res << "/FU1 " << fu1Obj << " 0 R ";
   if (fu2Obj) res << "/FU2 " << fu2Obj << " 0 R ";
@@ -312,10 +320,25 @@ bool Writer::buildDocument(std::string& result) {
     cs << "<< /Length " << stream.size() << " >>\nstream\n" << stream << "\nendstream";
     int contentNum = addObject(objs, cs.str());
 
+    std::string annots;
+    if (!sl.links.empty()) {
+      std::ostringstream an;
+      an << " /Annots [ ";
+      for (const auto& lk : sl.links) {
+        std::ostringstream a;
+        a << "<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect ["
+          << num(lk.x) << " " << num(lk.y) << " " << num(lk.x + lk.w) << " "
+          << num(lk.y + lk.h) << "] /A << /Type /Action /S /URI /URI ("
+          << escapeString(lk.url) << ") >> >>";
+        an << addObject(objs, a.str()) << " 0 R ";
+      }
+      an << "]";
+      annots = an.str();
+    }
     std::ostringstream pg;
     pg << "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "
        << num(pageW_) << " " << num(pageH_) << "] "
-       << res.str() << " /Contents " << contentNum << " 0 R >>";
+       << res.str() << " /Contents " << contentNum << " 0 R" << annots << " >>";
     pageObjNums.push_back(addObject(objs, pg.str()));
   }
 

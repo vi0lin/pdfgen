@@ -9,17 +9,17 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_FLOWABLES_API
 #error "stale flowables.h: it lacks PDFGEN_FLOWABLES_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_FLOWABLES_API != 12
+#elif PDFGEN_FLOWABLES_API != 13
 #error "version mismatch in flowables.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_PDFWRITER_API
 #error "stale pdfwriter.h: it lacks PDFGEN_PDFWRITER_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_PDFWRITER_API != 6
+#elif PDFGEN_PDFWRITER_API != 7
 #error "version mismatch in pdfwriter.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_METRICS_API
 #error "stale metrics.h: it lacks PDFGEN_METRICS_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_METRICS_API != 1
+#elif PDFGEN_METRICS_API != 2
 #error "version mismatch in metrics.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_IMAGE_API
@@ -40,6 +40,15 @@ namespace pdf {
 namespace styles {
 Style normal() { return {Font::Helvetica, 10, 12, Align::Left, 0, 0}; }
 Style body()   { return {Font::Helvetica, 11, 16, Align::Justify, 0, 0}; }
+Style code() {
+  Style s;
+  s.font = Font::Courier;
+  s.size = 9.5;
+  s.leading = 13.0;
+  s.align = Align::Left;
+  return s;
+}
+
 Style dateRight() { Style s = normal(); s.align = Align::Right; return s; }
 Style heading(int level) {
   level = std::clamp(level, 1, 5);
@@ -100,6 +109,8 @@ static Font applyFace(Font base, bool bold, bool italic) {
 void Paragraph::buildWords(const std::string& utf8) {
   // 1) parse inline markup into styled runs, splitting on spaces into words
   bool bold = false, italic = false, underline = false;
+  bool strike = false, mono = false;
+  int  link = -1;
   Word cur;  cur.width = 0; cur.forcedBreakAfter = false;
 
   auto flushWord = [&](bool forced) {
@@ -110,7 +121,9 @@ void Paragraph::buildWords(const std::string& utf8) {
     }
   };
   auto appendCp = [&](uint32_t cp) {
-    Font f = applyFace(style_.font, bold, italic);
+    if (cp == 0x06) cp = '<';                      // literal '<' from code spans
+
+    Font f = mono ? Font::Courier : applyFace(style_.font, bold, italic);
     int wb = cpToWinAnsi(cp);
     bool uni = false;
     std::string bytes;
@@ -118,8 +131,9 @@ void Paragraph::buildWords(const std::string& utf8) {
     else if (UnicodeFonts::inst().available()) { uni = true; bytes = encodeUtf8(cp); }
     else bytes = "?";
     if (cur.frags.empty() || cur.frags.back().font != f ||
-        cur.frags.back().underline != underline || cur.frags.back().uni != uni)
-      cur.frags.push_back({std::string(), f, underline, uni});
+        cur.frags.back().underline != underline || cur.frags.back().uni != uni ||
+        cur.frags.back().strike != strike || cur.frags.back().link != link)
+      cur.frags.push_back({std::string(), f, underline, uni, strike, link});
     cur.frags.back().text += bytes;
   };
 
@@ -129,17 +143,32 @@ void Paragraph::buildWords(const std::string& utf8) {
     char c = s[i];
     if (c == '<') {                              // possible tag
       size_t close = s.find('>', i);
-      if (close != std::string::npos && close - i <= 6) {
+      bool longTag = close != std::string::npos && i + 3 <= n &&
+                     (s.compare(i + 1, 2, "a=") == 0 ||
+                      s.compare(i + 1, 2, "A=") == 0);
+      if (close != std::string::npos && (close - i <= 6 || longTag)) {
         std::string tag = s.substr(i + 1, close - i - 1);
         std::string low;
         for (char t : tag) low += (char)std::tolower((unsigned char)t);
         bool handled = true;
+        if (longTag) {
+          links_.push_back(tag.substr(2));         // raw URL, case preserved
+          link = (int)links_.size() - 1;
+          underline = true;                        // links render underlined
+          i = close + 1;
+          continue;
+        }
         if      (low == "b")    bold = true;
         else if (low == "/b")   bold = false;
         else if (low == "i")    italic = true;
         else if (low == "/i")   italic = false;
         else if (low == "u")    underline = true;
         else if (low == "/u")   underline = false;
+        else if (low == "s")    strike = true;
+        else if (low == "/s")   strike = false;
+        else if (low == "code")  mono = true;
+        else if (low == "/code") mono = false;
+        else if (low == "/a")   { link = -1; underline = false; }
         else if (low == "br" || low == "br/" || low == "br /") flushWord(true);
         else handled = false;
         if (handled) { i = close + 1; continue; }
@@ -217,6 +246,8 @@ void Paragraph::breakLines(double width) {
 }
 
 double Paragraph::wrap(double width) {
+  width -= style_.leftIndent;                     // markdown list/quote indent
+
   if (width != wrappedWidth_) { breakLines(width); wrappedWidth_ = width; }
   return lines_.size() * style_.leading;
 }
@@ -247,7 +278,9 @@ void Paragraph::draw(Writer& w, double x, double yTop) {
     const Line& L = lines_[li];
     double baseline = yTop - li * leading - 0.8 * leading;
 
-    double startX = x + L.xOff, tw = 0;
+    double indent = style_.leftIndent -
+                    (li == 0 ? style_.hangOutdent : 0.0);   // hanging bullet
+    double startX = x + indent + L.xOff, tw = 0;
     double slack = L.boxWidth - L.width;
     if (style_.align == Align::Right)  startX = x + L.xOff + slack;
     if (style_.align == Align::Center) startX = x + L.xOff + slack / 2;
@@ -276,12 +309,24 @@ void Paragraph::draw(Writer& w, double x, double yTop) {
         fw = textWidth(f.font, f.text, style_.size);
         for (unsigned char c : f.text) if (c == ' ') fw += tw;
       }
-      if (f.underline) {
-        double uy = baseline - 0.11 * style_.size;
-        o << "ET\nq 0.5 w " << Writer::num(penX) << " " << Writer::num(uy)
-          << " m " << Writer::num(penX + fw) << " " << Writer::num(uy)
-          << " l S Q\nBT\n" << Writer::num(tw > 0 ? tw : 0.0) << " Tw\n"
+      if (f.underline || f.strike) {
+        o << "ET\nq 0.5 w ";
+        if (f.underline) {
+          double uy = baseline - 0.11 * style_.size;
+          o << Writer::num(penX) << " " << Writer::num(uy) << " m "
+            << Writer::num(penX + fw) << " " << Writer::num(uy) << " l S ";
+        }
+        if (f.strike) {
+          double sy = baseline + 0.26 * style_.size;   // mid x-height
+          o << Writer::num(penX) << " " << Writer::num(sy) << " m "
+            << Writer::num(penX + fw) << " " << Writer::num(sy) << " l S ";
+        }
+        o << "Q\nBT\n" << Writer::num(tw > 0 ? tw : 0.0) << " Tw\n"
           << Writer::num(penX + fw) << " " << Writer::num(baseline) << " Td\n";
+      }
+      if (f.link >= 0 && f.link < (int)links_.size()) {
+        w.addLink(penX, baseline - 0.25 * style_.size, fw,
+                  1.05 * style_.size, links_[(size_t)f.link]);
       }
       penX += fw;
     }
@@ -303,6 +348,14 @@ std::unique_ptr<Flowable> Paragraph::splitTop(double width, double availHeight) 
   lines_.erase(lines_.begin(), lines_.begin() + fit);
   wrappedWidth_ = width;                                   // remainder stays laid out
   return top;
+}
+
+void HRuleFlow::draw(Writer& w, double x, double yTop) {
+  std::ostringstream o;
+  double y = yTop - 5.0;
+  o << "q 0.8 w 0.7 G " << Writer::num(x) << " " << Writer::num(y) << " m "
+    << Writer::num(x + width_) << " " << Writer::num(y) << " l S Q\n";
+  w.content(o.str());
 }
 
 // ---- ImageFlow -------------------------------------------------------------------

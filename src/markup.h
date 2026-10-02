@@ -135,7 +135,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_MARKUP_API 16
+#define PDFGEN_MARKUP_API 17
 #include <functional>
 #include <string>
 #include <vector>
@@ -150,7 +150,11 @@ struct Token {
                     NewPage,
                     MarginsChange,     // margins[l r t b], -1 = keep
                     VSpace,            // vspacePts of vertical space
-                    GroupMark };       // @ outside tables
+                    GroupMark,         // @ outside tables
+                    CodeBlock,         // text = verbatim code (\n-separated)
+                    HRule,             // markdown horizontal rule
+                    Quote,             // markdown blockquote paragraph
+                    ListItem };        // level, text = "bullet\x07body"
   Token() = default;
   Kind kind;
   std::string text;        // Text: paragraph markup | Heading: title | Image: path
@@ -185,7 +189,13 @@ struct Options {
 // [table...] tag also hides the following table rows; passing tags lose the
 // condition option so downstream parsers see clean tags).
 std::string preprocessSource(const std::string& text, bool embedded,
-                             std::vector<std::string>& warnings);
+                             std::vector<std::string>& warnings,
+                             bool mdLineSemantics = false);
+
+// Markdown stage (runs after \on/\off, before everything else).
+// mdLineSemantics = true for .md sources (soft line wrapping).
+std::string translateMarkdown(const std::string& text, bool mdLineSemantics,
+                              std::vector<std::string>& warnings);
 
 // Stage 0a: expands \loop blocks (body repeated per record of a data file,
 // : placeholders replaced). Runs after embeds, before file includes.

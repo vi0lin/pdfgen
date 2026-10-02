@@ -16,7 +16,7 @@
 #endif
 #ifndef PDFGEN_PDFWRITER_API
 #error "stale pdfwriter.h: it lacks PDFGEN_PDFWRITER_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_PDFWRITER_API != 6
+#elif PDFGEN_PDFWRITER_API != 7
 #error "version mismatch in pdfwriter.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 

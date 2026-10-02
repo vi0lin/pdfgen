@@ -14,12 +14,12 @@
 // ---- release consistency check ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_MARKUP_API != 16
+#elif PDFGEN_MARKUP_API != 17
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
 #error "stale flowables.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_FLOWABLES_API != 12
+#elif PDFGEN_FLOWABLES_API != 13
 #error "version mismatch in flowables.h: replace ALL pdfgen source files from the same release."
 #endif
 
@@ -240,7 +240,9 @@ std::string expandEmbeds(const std::string& text, const std::string& baseDir,
       warnings.push_back("[embed]: cannot read " + src);
       continue;
     }
-    child = markup::preprocessSource(child, /*embedded=*/true, warnings);
+    bool childMd = src.size() > 3 &&
+                   toLower(src).compare(src.size() - 3, 3, ".md") == 0;
+    child = markup::preprocessSource(child, /*embedded=*/true, warnings, childMd);
     // an embedded file cannot redefine the parent's header/footer
     extractBlock(child, "[header]", "[/header]");
     extractBlock(child, "[bottom]", "[/bottom]");
@@ -457,7 +459,10 @@ bool renderDocument(const std::string& baseDir, const std::string& sourceText,
     std::string path = baseDir.empty() ? src : baseDir + "/" + src;
     std::string childText = readFile(path);
     if (childText.empty()) { err = "cannot read " + path; return false; }
-    childText = markup::preprocessSource(childText, /*embedded=*/true, warnings);
+    bool incMd = src.size() > 3 &&
+                 toLower(src).compare(src.size() - 3, 3, ".md") == 0;
+    childText = markup::preprocessSource(childText, /*embedded=*/true, warnings,
+                                         incMd);
     std::vector<std::string> subWarn;
     bool ok = renderDocument(baseDir, childText, "", &bytes, subWarn,
                              depth + 1, PageLayout{}, /*embedded=*/true);
@@ -525,16 +530,25 @@ bool processSource(const std::string& cliArg, std::vector<MailSpec>& mails,
   std::string lowArg = toLower(cliArg);
   bool isTxt = lowArg.size() > 4 &&
                lowArg.compare(lowArg.size() - 4, 4, ".txt") == 0;
-  if (isTxt) {
+  bool isMd  = lowArg.size() > 3 &&
+               lowArg.compare(lowArg.size() - 3, 3, ".md") == 0;
+  if (isTxt || isMd) {
     size_t slash = cliArg.find_last_of("/\\");
     baseDir = slash == std::string::npos ? "." : cliArg.substr(0, slash);
     mainFile = cliArg;
     std::string base = slash == std::string::npos ? cliArg : cliArg.substr(slash + 1);
-    base.erase(base.size() - 4);
-    defaultOut = base + ".pdf";                  // Example.txt -> Example.pdf
+    base.erase(base.size() - (isTxt ? 4 : 3));
+    defaultOut = base + ".pdf";                  // Example.md -> Example.pdf
   } else {
     baseDir = cliArg;
     mainFile = cliArg + "/text.txt";
+    {   // a directory may carry text.md instead
+      std::ifstream probe(mainFile);
+      if (!probe) {
+        std::ifstream md(cliArg + "/text.md");
+        if (md) mainFile = cliArg + "/text.md";
+      }
+    }
     defaultOut = "Bewerbung.pdf";                // old directory behavior
   }
 
@@ -544,7 +558,9 @@ bool processSource(const std::string& cliArg, std::vector<MailSpec>& mails,
     warnings.push_back("cannot read " + mainFile);
     return false;
   }
-  text = markup::preprocessSource(text, /*embedded=*/false, warnings);
+  bool mdMain = mainFile.size() > 3 &&
+                toLower(mainFile).compare(mainFile.size() - 3, 3, ".md") == 0;
+  text = markup::preprocessSource(text, /*embedded=*/false, warnings, mdMain);
 
   Project prj = parseProject(text, baseDir, defaultOut, warnings);
   bool ok = true;

@@ -7,7 +7,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_FLOWABLES_API 12
+#define PDFGEN_FLOWABLES_API 13
 #include <functional>
 #include <memory>
 #include <string>
@@ -25,6 +25,10 @@ struct Style {
   Align  align       = Align::Left;
   double spaceBefore = 0.0;    // gap inserted above (skipped at top of page)
   double spaceAfter  = 0.0;
+  // markdown lists/quotes: every line starts at leftIndent; the FIRST line
+  // starts hangOutdent earlier (where the bullet sits)
+  double leftIndent  = 0.0;
+  double hangOutdent = 0.0;
 };
 
 // Predefined styles roughly matching reportlab's sample stylesheet.
@@ -33,6 +37,7 @@ namespace styles {
   Style body();                // 11pt / 16 leading, justified (Python's Body)
   Style dateRight();           // right-aligned normal
   Style heading(int level);    // 1..5
+  Style code();                // monospaced block (Courier 9.5/13)
 }
 
 // ---- flowables ----------------------------------------------------------------
@@ -99,12 +104,14 @@ public:
 private:
   // uni=false: text is WinAnsi bytes for the built-in fonts.
   // uni=true:  text is UTF-8, rendered with the embedded Unicode font.
-  struct Frag { std::string text; Font font; bool underline; bool uni; };
+  struct Frag { std::string text; Font font; bool underline; bool uni;
+                bool strike = false; int link = -1; };   // link: index into links_
   struct Word { std::vector<Frag> frags; double width; bool forcedBreakAfter; };
   struct Line { std::vector<Frag> frags; double width; int spaces; bool last;
                 double boxWidth; double xOff; bool hasUni; };
 
   Style style_;
+  std::vector<std::string> links_;   // URLs referenced by Frag::link
   std::vector<Word> words_;      // built once in ctor
   std::vector<Line> lines_;      // rebuilt by wrap()
   std::vector<LineBox> boxes_;   // per-line geometry, empty = uniform
@@ -175,6 +182,17 @@ private:
   double dx_ = 0, dy_ = 0;
   bool absolute_ = false, backLayer_ = false;
   double absX_ = 0, absY_ = 0;
+};
+
+// Horizontal rule (markdown --- / *** / ___): a thin gray line across the
+// available width, vertically centered in its own small box.
+class HRuleFlow : public Flowable {
+public:
+  double wrap(double width) override { width_ = width; return 10.0; }
+  void draw(Writer& w, double x, double yTop) override;
+  FlowPtr cloneFlow() const override { return FlowPtr(new HRuleFlow(*this)); }
+private:
+  double width_ = 0;
 };
 
 // Internal marker used while building: separates @/[group] flow groups.

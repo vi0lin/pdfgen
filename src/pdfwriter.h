@@ -14,7 +14,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_PDFWRITER_API 6
+#define PDFGEN_PDFWRITER_API 7
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -39,6 +39,7 @@ enum class Font : uint8_t {
   HelveticaBold,
   HelveticaOblique,
   HelveticaBoldOblique,
+  Courier,                      // monospaced (code spans); F5, not embedded
 };
 const char* fontBaseName(Font f);       // e.g. "Helvetica-Bold"
 const char* fontResourceName(Font f);   // e.g. "F1" (name used in content streams)
@@ -86,6 +87,8 @@ public:
   // already painted on it). Used by the document when a page that only
   // carries decor must not survive before a merged PDF.
   void discardCurrentOwnPage();
+  // Clickable link rectangle on the CURRENT page (PDF user-space coords).
+  void addLink(double x, double y, double w, double h, const std::string& url);
 
   // Writes the whole document. Returns false on I/O error.
   bool save(const std::string& path);
@@ -103,8 +106,10 @@ public:
 private:
   double pageW_, pageH_;
   // page order: own content streams interleaved with imported pages
+  struct Link { double x, y, w, h; std::string url; };
   struct Slot { int extDoc = -1; int extPage = -1;
-                std::string back; std::string content; };
+                std::string back; std::string content;
+                std::vector<Link> links; };
   std::vector<Slot> slots_;
   std::vector<std::unique_ptr<ImportedPdf>> externalDocs_;
   std::vector<ImageXObject> images_;

@@ -4,7 +4,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_METRICS_API 1
+#define PDFGEN_METRICS_API 2
 #include <string>
 #include "pdfwriter.h"
 

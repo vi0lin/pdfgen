@@ -22,17 +22,17 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: it lacks PDFGEN_MARKUP_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_MARKUP_API != 16
+#elif PDFGEN_MARKUP_API != 17
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
 #error "stale flowables.h: it lacks PDFGEN_FLOWABLES_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_FLOWABLES_API != 12
+#elif PDFGEN_FLOWABLES_API != 13
 #error "version mismatch in flowables.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_PDFWRITER_API
 #error "stale pdfwriter.h: it lacks PDFGEN_PDFWRITER_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_PDFWRITER_API != 6
+#elif PDFGEN_PDFWRITER_API != 7
 #error "version mismatch in pdfwriter.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 
@@ -526,6 +526,278 @@ std::string processOnOff(const std::string& text,
 
 } // namespace
 
+// ---- GitHub-flavored markdown -----------------------------------------------------
+namespace {
+
+// inline transforms on one line: code spans, emphasis, strike, links,
+// autolinks, images, escapes. Order matters: escapes & code spans first.
+std::string mdInline(const std::string& line) {
+  std::string out;
+  size_t i = 0, n = line.size();
+  bool bold = false, ital = false, strike = false;
+  auto starts = [&](const char* t) {
+    size_t l = std::strlen(t);
+    return i + l <= n && line.compare(i, l, t) == 0;
+  };
+  while (i < n) {
+    char c = line[i];
+    // backslash escapes for md metacharacters
+    if (c == '\\' && i + 1 < n) {
+      char e = line[i + 1];
+      if (e == '*' || e == '_' || e == '`' || e == '~' || e == '|' ||
+          e == '#' || e == '!' || e == '(' || e == ')') {
+        out += e;
+        i += 2;
+        continue;
+      }
+    }
+    if (c == '`') {                                // inline code span
+      size_t close = line.find('`', i + 1);
+      if (close != std::string::npos) {
+        out += "<code>";
+        for (size_t k = i + 1; k < close; ++k) {
+          char cc = line[k];
+          if (cc == '<') out += '\x06';           // keep <b> etc. literal
+          else if (cc == '[') out += '\x01';
+          else if (cc == ']') out += '\x02';
+          else out += cc;
+        }
+        out += "</code>";
+        i = close + 1;
+        continue;
+      }
+    }
+    if (starts("~~")) {
+      out += strike ? "</s>" : "<s>";
+      strike = !strike;
+      i += 2;
+      continue;
+    }
+    if (starts("***")) {                           // bold+italic together
+      out += (bold || ital) ? "</i></b>" : "<b><i>";
+      bold = ital = !bold;
+      i += 3;
+      continue;
+    }
+    if (starts("**") || starts("__")) {
+      out += bold ? "</b>" : "<b>";
+      bold = !bold;
+      i += 2;
+      continue;
+    }
+    if ((c == '*' || c == '_') &&
+        // intraword underscores stay literal (file_name_x)
+        !(c == '_' && i > 0 && std::isalnum((unsigned char)line[i - 1]) &&
+          i + 1 < n && std::isalnum((unsigned char)line[i + 1]))) {
+      // emphasis only when it can open before/close after non-space
+      bool canOpen  = i + 1 < n && !std::isspace((unsigned char)line[i + 1]);
+      bool canClose = ital && i > 0 && !std::isspace((unsigned char)line[i - 1]);
+      if (canClose) { out += "</i>"; ital = false; ++i; continue; }
+      if (canOpen && !ital &&
+          line.find(c, i + 1) != std::string::npos) {
+        out += "<i>";
+        ital = true;
+        ++i;
+        continue;
+      }
+    }
+    if (starts("![")) {                            // image -> pdfgen tag
+      size_t rb = line.find("](", i + 2);
+      size_t end = rb == std::string::npos ? std::string::npos
+                                           : line.find(')', rb + 2);
+      if (end != std::string::npos) {
+        out += "[" + trim(line.substr(rb + 2, end - rb - 2)) + "]";
+        i = end + 1;
+        continue;
+      }
+    }
+    if (c == '[') {                                // [text](url)
+      size_t rb = line.find("](", i + 1);
+      size_t end = rb == std::string::npos ? std::string::npos
+                                           : line.find(')', rb + 2);
+      if (rb != std::string::npos && end != std::string::npos) {
+        std::string txt = line.substr(i + 1, rb - i - 1);
+        std::string url = trim(line.substr(rb + 2, end - rb - 2));
+        out += "<a=" + url + ">" + txt + "</a>";
+        i = end + 1;
+        continue;
+      }
+    }
+    if (c == '<' && (starts("<http://") || starts("<https://"))) {
+      size_t end = line.find('>', i);
+      if (end != std::string::npos) {
+        std::string url = line.substr(i + 1, end - i - 1);
+        out += "<a=" + url + ">" + url + "</a>";
+        i = end + 1;
+        continue;
+      }
+    }
+    out += c;
+    ++i;
+  }
+  if (bold)   out += "</b>";
+  if (ital)   out += "</i>";
+  if (strike) out += "</s>";
+  return out;
+}
+
+bool isHRuleLine(const std::string& t) {
+  if (t.size() < 3) return false;
+  char c = t[0];
+  if (c != '-' && c != '*' && c != '_') return false;
+  for (char x : t)
+    if (x != c && x != ' ') return false;
+  return true;
+}
+
+// list bullet? returns marker length and fills bullet text
+int listMarker(const std::string& t, std::string& bullet, bool& ordered) {
+  ordered = false;
+  if (t.size() >= 2 && (t[0] == '-' || t[0] == '*' || t[0] == '+') &&
+      t[1] == ' ') {
+    // task list?
+    if (t.size() >= 6 && t.compare(1, 4, " [ ]") == 0 &&
+        (t.size() == 6 || t[6] != '\0')) { bullet = "\xE2\x98\x90"; return 6; }
+    if (t.size() >= 6 && (t.compare(1, 4, " [x]") == 0 ||
+                          t.compare(1, 4, " [X]") == 0)) {
+      bullet = "\xE2\x98\x91";
+      return 6;
+    }
+    bullet = "\xE2\x80\xA2";                       // bullet dot
+    return 2;
+  }
+  size_t d = 0;
+  while (d < t.size() && std::isdigit((unsigned char)t[d])) ++d;
+  if (d > 0 && d + 1 < t.size() && (t[d] == '.' || t[d] == ')') &&
+      t[d + 1] == ' ') {
+    bullet = t.substr(0, d + 1);
+    ordered = true;
+    return (int)d + 2;
+  }
+  return 0;
+}
+
+} // namespace
+
+// GitHub-flavored markdown: fenced code -> verbatim code lines (\x04),
+// inline markup -> pdfgen tags, lists/quotes/rules -> styled lines. With
+// mdLineSemantics, single newlines inside a paragraph become soft.
+std::string translateMarkdown(const std::string& text, bool mdLineSemantics,
+                              std::vector<std::string>& warnings) {
+  (void)warnings;
+  std::vector<std::string> lines;
+  {
+    std::stringstream ss(text);
+    std::string l;
+    while (std::getline(ss, l)) {
+      if (!l.empty() && l.back() == '\r') l.pop_back();
+      lines.push_back(l);
+    }
+  }
+  std::string out;
+  auto emit = [&](const std::string& l) { out += l; out += '\n'; };
+  bool inFence = false;
+  int tableDepth = 0;                              // \t ... \\t nesting
+  bool prevSoftText = false;                       // md line joining
+
+  for (size_t li = 0; li < lines.size(); ++li) {
+    const std::string& raw = lines[li];
+    std::string t = trim(raw);
+
+    if (!t.empty() && t[0] == '\x03') {            // \off verbatim: untouched
+      emit(raw);
+      prevSoftText = false;
+      continue;
+    }
+    // fences
+    if (t.rfind("```", 0) == 0) {
+      inFence = !inFence;
+      prevSoftText = false;
+      continue;                                    // fence line disappears
+    }
+    if (inFence) {
+      std::string code = "\x04";
+      for (char c : raw) {                         // raw: keep indentation
+        if (c == '[') code += '\x01';
+        else if (c == ']') code += '\x02';
+        else if (c == '<') code += '\x06';
+        else code += c;
+      }
+      emit(code);
+      prevSoftText = false;
+      continue;
+    }
+    std::string low = toLower(t);
+    {
+      auto tword = [&](const char* w) {
+        size_t wl = std::strlen(w);
+        return low.rfind(w, 0) == 0 &&
+               (low.size() == wl || low[wl] == ' ' || low[wl] == ',' ||
+                low[wl] == '\t');
+      };
+      if (low == "\\\\t" || low == "\\\\table" || low == "\\\\tabelle") {
+        if (tableDepth) --tableDepth;
+      } else if (tword("\\t") || tword("\\table") || tword("\\tabelle")) {
+        ++tableDepth;
+      }
+    }
+    bool inTable = tableDepth > 0 || (!t.empty() && t[0] == '|');
+
+    // structural markdown (outside tables and pdfgen tag lines)
+    bool tagLine = !t.empty() && (t[0] == '[' || t[0] == '\\' || t[0] == '@' ||
+                                  t[0] == '#');
+    if (!inTable && !tagLine) {
+      if (isHRuleLine(t)) {
+        emit("\x08rule");                          // token for the tokenizer
+        prevSoftText = false;
+        continue;
+      }
+      // blockquote
+      if (!t.empty() && t[0] == '>') {
+        std::string body = trim(t.substr(1));
+        emit("\x08q " + mdInline(body));
+        prevSoftText = false;
+        continue;
+      }
+      // lists with 2-space nesting
+      size_t ind = 0;
+      while (ind < raw.size() && raw[ind] == ' ') ++ind;
+      std::string bullet;
+      bool ordered = false;
+      int ml = listMarker(t, bullet, ordered);
+      if (ml > 0) {
+        int level = (int)(ind / 2);
+        emit("\x08l" + std::to_string(level) + " " + bullet + "\x07" +
+             mdInline(trim(t.substr(ml))));
+        prevSoftText = false;
+        continue;
+      }
+    }
+
+    // plain line: inline markdown; md files additionally join soft lines
+    std::string conv = tagLine || inTable ? mdInline(raw) : mdInline(raw);
+    if (mdLineSemantics && !inTable && !tagLine && !t.empty()) {
+      bool hardBreak = raw.size() >= 2 &&
+                       raw.compare(raw.size() - 2, 2, "  ") == 0;
+      if (!raw.empty() && raw.back() == '\\') {
+        hardBreak = true;
+        conv = mdInline(raw.substr(0, raw.size() - 1));
+      }
+      if (prevSoftText && !out.empty() && out.back() == '\n') {
+        out.pop_back();                            // join with a space
+        out += ' ';
+      }
+      emit(trim(conv));
+      prevSoftText = !hardBreak;
+      continue;
+    }
+    prevSoftText = false;
+    emit(conv);
+  }
+  if (!text.empty() && text.back() != '\n' && !out.empty()) out.pop_back();
+  return out;
+}
+
 static std::string escapeLiteralBrackets(const std::string& text) {
   std::string out;
   for (size_t i = 0; i < text.size(); ++i) {
@@ -723,10 +995,12 @@ std::string applyStyles(const std::string& text,
 }
 
 std::string preprocessSource(const std::string& text, bool embedded,
-                             std::vector<std::string>& warnings) {
+                             std::vector<std::string>& warnings,
+                             bool mdLineSemantics) {
   std::stringstream ss(applyStyles(
       escapeLiteralBrackets(translateBackslashTags(
-          processOnOff(text, warnings), warnings)), warnings));
+          translateMarkdown(processOnOff(text, warnings), mdLineSemantics,
+                            warnings), warnings)), warnings));
   std::string line, out;
   bool skipTableRows = false;
   std::vector<bool> condStack;                   // \c blocks
@@ -1165,7 +1439,9 @@ bool isTxtIncludeTag(const std::string& s, size_t pos, std::string& name, size_t
       inner.find(',')  != std::string::npos ||
       inner.find('|')  != std::string::npos) return false;
   std::string low = toLower(inner);
-  if (low.size() < 5 || low.compare(low.size() - 4, 4, ".txt") != 0) return false;
+  bool txt = low.size() >= 5 && low.compare(low.size() - 4, 4, ".txt") == 0;
+  bool md  = low.size() >= 4 && low.compare(low.size() - 3, 3, ".md") == 0;
+  if (!txt && !md) return false;
   name = inner;
   end = close + 1;
   return true;
@@ -1199,7 +1475,9 @@ std::string expandIncludesDepth(const std::string& text, const std::string& base
                         std::istreambuf_iterator<char>());
     while (!content.empty() && (content.back() == '\n' || content.back() == '\r'))
       content.pop_back();
-    content = preprocessSource(content, embedded, warnings);
+    bool incMd = name.size() > 3 &&
+                 toLower(name).compare(name.size() - 3, 3, ".md") == 0;
+    content = preprocessSource(content, embedded, warnings, incMd);
     while (!content.empty() && (content.back() == '\n' || content.back() == '\r'))
       content.pop_back();
     content = expandIncludesDepth(content, baseDir, warnings, depth + 1, embedded);
@@ -1580,6 +1858,15 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
   // (e.g. a heading) down.
   int blankRun = 0;
   bool anyContent = false;
+  std::string pendingCode;               // consecutive \x04 lines
+  auto flushCode = [&]() {
+    if (pendingCode.empty()) return;
+    if (!pendingCode.empty() && pendingCode.back() == '\n')
+      pendingCode.pop_back();
+    Token tk; tk.kind = Token::Kind::CodeBlock; tk.text = pendingCode;
+    tokens.push_back(std::move(tk));
+    pendingCode.clear();
+  };
   auto flushBreak = [&]() {
     if (blankRun == 0) return;
     int count = anyContent ? blankRun : blankRun - 1;
@@ -1595,6 +1882,37 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
   std::string line;
   while (std::getline(ss, line)) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
+
+    if (!line.empty() && line[0] == '\x04' && !blockTable) {   // fenced code
+      flushTable(); flushText();
+      pendingCode += line.substr(1);
+      pendingCode += '\n';
+      anyContent = true;
+      blankRun = 0;
+      continue;
+    }
+    if (!pendingCode.empty()) flushCode();
+
+    if (!line.empty() && line[0] == '\x08' && !blockTable) {    // md structure
+      std::string m = line.substr(1);
+      flushTable(); flushText();
+      flushBreak();
+      anyContent = true;
+      if (m == "rule") {
+        Token tk; tk.kind = Token::Kind::HRule;
+        tokens.push_back(std::move(tk));
+      } else if (m.rfind("q ", 0) == 0) {
+        Token tk; tk.kind = Token::Kind::Quote; tk.text = trim(m.substr(2));
+        tokens.push_back(std::move(tk));
+      } else if (m[0] == 'l') {
+        size_t sp = m.find(' ');
+        Token tk; tk.kind = Token::Kind::ListItem;
+        tk.level = std::atoi(m.c_str() + 1);
+        tk.text = sp == std::string::npos ? "" : m.substr(sp + 1);
+        tokens.push_back(std::move(tk));
+      }
+      continue;
+    }
 
     if (blockTable) {                               // inside \t ... \\t
       if (!line.empty() && line[0] == '\x03') {    // verbatim: full-width text
@@ -2011,6 +2329,7 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
     }
     pendingText += '\n';                            // hard break between lines
   }
+  flushCode();
   if (blockTable) {
     flushPartialRows();
     if (groupOpen) {
@@ -2306,6 +2625,47 @@ static pdf::FlowList buildFlowablesInner(const std::vector<Token>& tokens,
         auto epf = std::make_unique<ExternalPdfFlow>(std::move(bytes));
         epf->setNoBlankBefore(t.noBlank);
         out.push_back(std::move(epf));
+        break;
+      }
+
+      case Token::Kind::CodeBlock: {
+        // monospace block, indentation preserved via NBSP
+        std::string txt;
+        for (char c : t.text) {
+          if (c == ' ') txt += "\xC2\xA0";          // NBSP survives wrapping
+          else if (c == '\x06') txt += '\x06';      // '<' restored in Paragraph
+          else txt += c;
+        }
+        Style cs = styles::code();
+        cs.spaceBefore = 4;
+        cs.spaceAfter = 6;
+        out.push_back(std::make_unique<Paragraph>(
+            unescapeLiteralBrackets(txt), cs));
+        break;
+      }
+
+      case Token::Kind::HRule:
+        out.push_back(std::make_unique<HRuleFlow>());
+        break;
+
+      case Token::Kind::Quote: {
+        Style qs = styles::body();
+        qs.leftIndent = 18;
+        out.push_back(std::make_unique<Paragraph>(
+            unescapeLiteralBrackets(t.text), qs));
+        break;
+      }
+
+      case Token::Kind::ListItem: {
+        Style ls = styles::body();
+        ls.leftIndent = 16.0 + 14.0 * t.level;
+        ls.hangOutdent = 16.0;
+        std::string txt = t.text;
+        size_t sep = txt.find('\x07');
+        if (sep != std::string::npos)
+          txt = txt.substr(0, sep) + "\xC2\xA0" + txt.substr(sep + 1);
+        out.push_back(std::make_unique<Paragraph>(
+            unescapeLiteralBrackets(txt), ls));
         break;
       }
 
