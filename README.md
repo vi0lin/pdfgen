@@ -10,6 +10,19 @@ existing ones and e-mail the results.
 
 ## Quick start
 
+### Get the source
+
+```sh
+git clone --recurse-submodules https://github.com/vi0lin/pdfgen
+cd pdfgen
+# already cloned without submodules? fetch them afterwards:
+git submodule update --init
+```
+
+The only submodule is `external/curl`, a fallback for systems without a
+libcurl dev package (Windows / cross builds) — with
+`libcurl4-openssl-dev` installed, a plain `git clone` works too.
+
 ### Build
 
 ```sh
@@ -26,7 +39,7 @@ this repo ships a ready `build.sh.conf`):
 ```sh
 git clone https://github.com/vi0lin/build.sh && cd build.sh
 ./build.sh --add-to-path          # one-time install
-cd /path/to/pdfgen
+cd /path/to/pdfgen                # the clone from above
 build.sh deb@local                # configure + build here
 build.sh --run deb@local          # build and start
 build.sh exe@windows deb@local    # several targets/machines in parallel
