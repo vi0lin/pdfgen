@@ -32,7 +32,7 @@
 /* release consistency check (see gmail_send.h) */
 #ifndef PDFGEN_GMAIL_SEND_API
 #error "stale gmail_send.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_GMAIL_SEND_API != 4
+#elif PDFGEN_GMAIL_SEND_API != 5
 #error "version mismatch in gmail_send.h: replace ALL pdfgen source files from the same release."
 #endif
 
@@ -66,11 +66,12 @@ int send_mail_ex(const smtp_transport *tr,
 {
     int i;
     char url[512];
-    smtp_transport gmail = { "smtp.gmail.com", 465, 1, 0 };
+    smtp_transport gmail = { "smtp.gmail.com", 465, 1, SMTP_AUTH_PASSWORD };
     if (!tr) tr = &gmail;
     PDFGEN_LOGD("send_mail: via %s:%d (%s%s) von %s, %d an, %d cc, %d Anhaenge",
                 tr->host, tr->port, tr->ssl ? "smtps" : "starttls",
-                tr->xoauth2 ? ", xoauth2" : "", from, n_to, n_cc, n_files);
+                tr->auth == SMTP_AUTH_XOAUTH2 ? ", xoauth2" : "",
+                from, n_to, n_cc, n_files);
     CURL *curl = curl_easy_init();
     if (!curl) {
         PDFGEN_LOGE("curl_easy_init failed");
@@ -87,14 +88,20 @@ int send_mail_ex(const smtp_transport *tr,
              tr->ssl ? "smtps" : "smtp", tr->host, tr->port);
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_USERNAME, from);
-    if (tr->xoauth2) {
+    switch (tr->auth) {
+    case SMTP_AUTH_XOAUTH2:
         /* OAuth2 bearer: curl builds the XOAUTH2 SASL string itself */
         curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, password);
 #ifdef CURLOPT_LOGIN_OPTIONS
         curl_easy_setopt(curl, CURLOPT_LOGIN_OPTIONS, "AUTH=XOAUTH2");
 #endif
-    } else {
+        break;
+    case SMTP_AUTH_PASSWORD:
+    default:
+        /* unknown future values fall back to password auth instead of
+         * failing, so an older lib behind a newer config stays usable */
         curl_easy_setopt(curl, CURLOPT_PASSWORD, password);
+        break;
     }
     /* STARTTLS on 587 and implicit TLS on 465 both end up encrypted;
      * CURLUSESSL_ALL makes plain 587 upgrade mandatory. */

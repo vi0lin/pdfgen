@@ -13,11 +13,24 @@
  */
 #ifndef PDFGEN_GMAIL_SEND_H
 #define PDFGEN_GMAIL_SEND_H
-#define PDFGEN_GMAIL_SEND_API 4
+#define PDFGEN_GMAIL_SEND_API 5
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* Auth mechanisms. Credentials stay the SAME two strings everywhere
+ * (address + token); this enum only tells the transport how to USE the
+ * token. New mechanisms APPEND values -- 0 stays "password", so zero-
+ * initialized structs from older callers keep working, and neither the
+ * send_mail_ex signature nor any credential input (pdfgen.conf, --sender,
+ * setMailConfig) ever changes when a mechanism is added. */
+typedef enum {
+  SMTP_AUTH_PASSWORD = 0,   /* app password / account password (PLAIN/LOGIN) */
+  SMTP_AUTH_XOAUTH2  = 1    /* token is an OAuth2 bearer (XOAUTH2) */
+  /* future: SMTP_AUTH_OAUTH2_CMD = 2 (token = command printing a fresh
+   * bearer), SMTP_AUTH_CRAM_MD5 = 3, ... -- append only, never renumber */
+} smtp_auth;
 
 /* Transport parameters: host/port/TLS variant and auth mechanism. The
  * providers' values live in mail_config.cpp; this struct keeps the C module
@@ -26,7 +39,7 @@ typedef struct {
   const char *host;      /* e.g. "smtp.gmail.com" */
   int         port;      /* 465 (ssl=1) or 587 (ssl=0, STARTTLS) */
   int         ssl;       /* 1 = implicit TLS (smtps://), 0 = STARTTLS */
-  int         xoauth2;   /* 1 = token is an OAuth2 bearer (XOAUTH2) */
+  smtp_auth   auth;      /* how the token is used; 0 = password */
 } smtp_transport;
 
 /* Sends one mail over an explicit transport. Counts must match the array
@@ -85,7 +98,7 @@ struct Transport {
   std::string host;
   int port = 465;
   bool ssl = true;
-  bool xoauth2 = false;
+  bool xoauth2 = false;    // kept stable for callers; mapped onto smtp_auth
 };
 
 inline int send(const Transport& tr,
@@ -102,7 +115,7 @@ inline int send(const Transport& tr,
   };
   std::vector<const char*> pt = ptrs(to), pc = ptrs(cc), pa = ptrs(attachments);
   smtp_transport c{tr.host.c_str(), tr.port, tr.ssl ? 1 : 0,
-                   tr.xoauth2 ? 1 : 0};
+                   tr.xoauth2 ? SMTP_AUTH_XOAUTH2 : SMTP_AUTH_PASSWORD};
   return send_mail_ex(&c, from.c_str(), password.c_str(),
                       pt.data(), (int)pt.size(),
                       pc.data(), (int)pc.size(),
