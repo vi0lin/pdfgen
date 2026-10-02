@@ -94,13 +94,19 @@ void usage(const char* argv0) {
       "                       (all of them, or only the listed NAMEs)\n"
       "  --mail-test          send to each mail's test= / [test] address instead\n"
       "  -c, --config FILE    sender config (default: pdfgen.conf next to the binary)\n"
-      "  --sender ADDR TOKEN  add a sender account (repeatable)\n"
+      "  --sender ADDR TOKEN [PROV|HOST:PORT[:ssl]]\n"
+      "                       add a sender account; provider is inferred\n"
+      "                       from the domain (gmail, outlook, gmx, web.de,\n"
+      "                       t-online, yahoo, icloud) or given explicitly\n"
+      "  --mail-accounts      list the resolved sender accounts and exit\n"
       "  --default-sender ADDR\n"
       "  --test-to ADDR       add a test recipient (repeatable)\n"
       "  -v, --verbose        also print debug messages\n";
 }
 
 } // namespace
+
+static bool listAccounts = false;
 
 int main(int argc, char** argv) {
   std::vector<std::string> sources, mailNames;
@@ -130,7 +136,37 @@ int main(int argc, char** argv) {
       pdfgen::MailAccount acc;
       acc.address = argv[++i];
       acc.token   = argv[++i];
+      // provider from the mail domain (gmail, outlook, gmx, web.de,
+      // t-online, yahoo, icloud); optional third value overrides it:
+      // a provider name or HOST:PORT[:ssl] for any other server
+      acc.provider = pdfgen::providerForAddress(acc.address);
+      if (i + 1 < argc && argv[i + 1][0] != '-' &&
+          std::string(argv[i + 1]).find('@') == std::string::npos) {
+        std::string ex = argv[++i];
+        size_t c = ex.find(':');
+        if (c == std::string::npos) {
+          acc.provider = ex;                       // named provider
+        } else {
+          acc.provider = "smtp";
+          acc.host = ex.substr(0, c);
+          std::string rest = ex.substr(c + 1);
+          size_t c2 = rest.find(':');
+          acc.port = std::atoi(rest.substr(0, c2).c_str());
+          if (c2 != std::string::npos && rest.substr(c2 + 1) == "ssl")
+            acc.ssl = true;
+        }
+      }
+      if (acc.provider.empty()) {
+        PDFGEN_LOGE("--sender %s: Anbieter nicht erkennbar -- bitte angeben: "
+                    "--sender ADRESSE TOKEN gmx  (oder HOST:PORT[:ssl])",
+                    acc.address.c_str());
+        return 2;
+      }
       cli.accounts.push_back(acc);
+      continue;
+    }
+    if (a == "--mail-accounts") {                  // show resolved accounts
+      listAccounts = true;
       continue;
     }
     if (a == "--default-sender") {
@@ -150,7 +186,7 @@ int main(int argc, char** argv) {
     if (mailMode) mailNames.push_back(a);            // names follow --mail
     else sources.push_back(a);
   }
-  if (sources.empty()) { usage(argv[0]); return 2; }
+  if (sources.empty() && !listAccounts) { usage(argv[0]); return 2; }
 
   // ---- Absenderkonten: Datei, dann Kommandozeile obendrauf ----
   pdfgen::MailConfig cfg;
@@ -174,6 +210,22 @@ int main(int argc, char** argv) {
   }
   for (const auto& w : cfgWarnings) PDFGEN_LOGW("%s", w.c_str());
   pdfgen::setMailConfig(cfg);
+  if (listAccounts) {
+    std::vector<std::string> rw;
+    printf("Konfigurierte Absenderkonten:\n");
+    for (auto a : cfg.accounts) {
+      bool ok = pdfgen::resolveAccount(a, rw);
+      printf("  %-30s %-9s %s:%d %s%s%s%s\n", a.address.c_str(),
+             a.provider.c_str(), ok ? a.host.c_str() : "?",
+             a.port, a.ssl ? "smtps" : "starttls",
+             a.xoauth2 ? " xoauth2" : "",
+             a.isDefault ? "  [default]" : "",
+             a.token.empty() ? "  (kein Token!)" : "");
+    }
+    for (auto& w : rw) PDFGEN_LOGW("%s", w.c_str());
+    if (cfg.accounts.empty()) printf("  (keine)\n");
+    return 0;
+  }
 
   // ---- PDFs erzeugen ----
   std::vector<project::MailSpec> mails;

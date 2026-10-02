@@ -173,6 +173,38 @@ keep-together group per record. Data files are read verbatim; out-of-range
 fields warn once per loop and insert nothing. JSON input (`\jloop`) is
 planned but deliberately postponed.
 
+**Mail providers:** sending always speaks SMTP (IMAP/POP3 are *retrieval*
+protocols and not needed for sending); what varies is the provider profile
+and the auth mechanism, and both are built in now. `pdfgen.conf` sections:
+`[gmail]`, `[outlook]`/`[office365]`, `[gmx]`, `[web.de]`, `[t-online]`,
+`[yahoo]`, `[icloud]` carry the right host/port/TLS variant (STARTTLS :587
+vs. implicit TLS :465); `[smtp HOST:PORT]` / `[smtp HOST:465 ssl]` covers
+any other server; the `xoauth2` flag makes the token line an OAuth2 bearer
+(XOAUTH2) for accounts without app passwords. The existing syntax keeps
+working unchanged: `--sender ADDR TOKEN` now infers the provider from the
+mail domain (an optional third value overrides it: a provider name or
+`HOST:PORT[:ssl]`), `[gmail]`-only configs behave exactly as before, and
+the old `send_mail()` C entry point still exists (it forwards to the new
+transport-parameterized `send_mail_ex`). `--mail-accounts` lists the
+resolved accounts (host, port, TLS, auth) without sending anything.
+
+**GitHub-flavored markdown:** works in .txt sources on top of the pdfgen
+syntax, and whole `.md` files render directly (`pdfgen README.md` →
+README.pdf; a directory may carry `text.md` instead of text.txt). Headings
+and |-tables are shared syntax anyway. Supported: `**bold**`, `*italic*`,
+`~~strike~~`, `` `inline code` `` (Courier), fenced ``` code blocks
+(verbatim, indentation preserved), `-`/`*`/`1.` lists with 2-space nesting
+and hanging indents, `- [ ]`/`- [x]` task boxes, `>` blockquotes, `---`
+rules, `[text](url)` and `<https://…>` as CLICKABLE link annotations,
+`![alt](img.png)` mapped onto the image tag, and backslash escapes for
+markdown metacharacters. Only `.md` files use markdown line semantics
+(single newlines are soft; a hard break needs two trailing spaces or a
+trailing backslash) — `.txt` keeps pdfgen's rule that every newline is a
+hard break. Structural markdown (lists, quotes, rules) is disabled inside
+tables; `\off` shows markdown literally. The one behavior change in .txt:
+a line of 3+ dashes/stars is now a rule, and `- ` at line start begins a
+list — escape with `\-`/`\*` or `\off` when literal text is wanted.
+
 **Parsing on/off (verbatim mode):** `\off` renders every following line as
 literal text (tags, tables, placeholders stay visible) until `\on` at the
 same level. As a line prefix the switch applies to exactly that line

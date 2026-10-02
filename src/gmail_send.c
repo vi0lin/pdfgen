@@ -32,7 +32,7 @@
 /* release consistency check (see gmail_send.h) */
 #ifndef PDFGEN_GMAIL_SEND_API
 #error "stale gmail_send.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_GMAIL_SEND_API != 3
+#elif PDFGEN_GMAIL_SEND_API != 4
 #error "version mismatch in gmail_send.h: replace ALL pdfgen source files from the same release."
 #endif
 
@@ -55,17 +55,22 @@
 /* ------------------------------------------------------------------ */
 /*  Reusable send function                                             */
 /* ------------------------------------------------------------------ */
-int send_mail(const char *from,
-              const char *password,
-              const char **to,   int n_to,     /* visible recipients   */
-              const char **cc,   int n_cc,     /* carbon copies        */
-              const char *subject,
-              const char *body_text,
-              const char **files, int n_files) /* attachment paths     */
+int send_mail_ex(const smtp_transport *tr,
+                 const char *from,
+                 const char *password,
+                 const char **to,   int n_to,
+                 const char **cc,   int n_cc,
+                 const char *subject,
+                 const char *body_text,
+                 const char **files, int n_files)
 {
     int i;
-    PDFGEN_LOGD("send_mail: von %s, %d an, %d cc, %d Anhaenge",
-                from, n_to, n_cc, n_files);
+    char url[512];
+    smtp_transport gmail = { "smtp.gmail.com", 465, 1, 0 };
+    if (!tr) tr = &gmail;
+    PDFGEN_LOGD("send_mail: via %s:%d (%s%s) von %s, %d an, %d cc, %d Anhaenge",
+                tr->host, tr->port, tr->ssl ? "smtps" : "starttls",
+                tr->xoauth2 ? ", xoauth2" : "", from, n_to, n_cc, n_files);
     CURL *curl = curl_easy_init();
     if (!curl) {
         PDFGEN_LOGE("curl_easy_init failed");
@@ -78,9 +83,21 @@ int send_mail(const char *from,
     char buf[1024];
 
     /* --- connection & authentication --- */
-    curl_easy_setopt(curl, CURLOPT_URL, SMTP_URL);
+    snprintf(url, sizeof url, "%s://%s:%d",
+             tr->ssl ? "smtps" : "smtp", tr->host, tr->port);
+    curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_USERNAME, from);
-    curl_easy_setopt(curl, CURLOPT_PASSWORD, password);
+    if (tr->xoauth2) {
+        /* OAuth2 bearer: curl builds the XOAUTH2 SASL string itself */
+        curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, password);
+#ifdef CURLOPT_LOGIN_OPTIONS
+        curl_easy_setopt(curl, CURLOPT_LOGIN_OPTIONS, "AUTH=XOAUTH2");
+#endif
+    } else {
+        curl_easy_setopt(curl, CURLOPT_PASSWORD, password);
+    }
+    /* STARTTLS on 587 and implicit TLS on 465 both end up encrypted;
+     * CURLUSESSL_ALL makes plain 587 upgrade mandatory. */
     curl_easy_setopt(curl, CURLOPT_USE_SSL, (long)CURLUSESSL_ALL);
     /* Without timeouts, an unreachable SMTP server (firewalled network,
      * offline machine) makes curl hang forever. */
@@ -191,6 +208,18 @@ const char *pdfgen_mail_from(void)     { return FROM_ADDR; }
 const char *pdfgen_mail_password(void) { return APP_PASSWORD; }
 void pdfgen_mail_global_init(void)     { curl_global_init(CURL_GLOBAL_ALL); }
 void pdfgen_mail_global_cleanup(void)  { curl_global_cleanup(); }
+
+int send_mail(const char *from,
+              const char *password,
+              const char **to,   int n_to,
+              const char **cc,   int n_cc,
+              const char *subject,
+              const char *body_text,
+              const char **files, int n_files)
+{
+    return send_mail_ex(NULL, from, password, to, n_to, cc, n_cc,
+                        subject, body_text, files, n_files);
+}
 
 int send_test_mail(const char* attachment)
 {

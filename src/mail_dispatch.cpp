@@ -24,10 +24,15 @@ int sendMail(const project::MailSpec& m, bool testRun) {
                 acc->address.c_str());
     return 1;
   }
-  if (acc->provider != "gmail") {
-    PDFGEN_LOGE("mail '%s': Anbieter '%s' wird (noch) nicht unterstuetzt",
-                m.name.c_str(), acc->provider.c_str());
-    return 1;
+  MailAccount resolved = *acc;
+  {
+    std::vector<std::string> rw;
+    if (!resolveAccount(resolved, rw)) {
+      for (auto& w : rw) PDFGEN_LOGE("%s", w.c_str());
+      PDFGEN_LOGE("mail '%s': Konto %s hat keinen aufloesbaren SMTP-Server",
+                  m.name.c_str(), acc->address.c_str());
+      return 1;
+    }
   }
 
   std::vector<std::string> to = m.to, cc = m.cc;
@@ -56,7 +61,12 @@ int sendMail(const project::MailSpec& m, bool testRun) {
               m.name.c_str(), acc->address.c_str(), to.size(), attachments.size());
   for (const auto& a : attachments) PDFGEN_LOGD("  Anhang: %s", a.c_str());
 
-  int rc = pdfgen_mail::send(acc->address, acc->token, to, cc, subject,
+  pdfgen_mail::Transport tr{resolved.host, resolved.port, resolved.ssl,
+                            resolved.xoauth2};
+  PDFGEN_LOGD("mail '%s': %s:%d %s%s", m.name.c_str(), tr.host.c_str(),
+              tr.port, tr.ssl ? "smtps" : "starttls",
+              tr.xoauth2 ? " xoauth2" : "");
+  int rc = pdfgen_mail::send(tr, acc->address, acc->token, to, cc, subject,
                              m.body, attachments);
   if (rc == 0) PDFGEN_LOGI("mail '%s': gesendet (von %s)", m.name.c_str(),
                            acc->address.c_str());

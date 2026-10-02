@@ -13,14 +13,35 @@
  */
 #ifndef PDFGEN_GMAIL_SEND_H
 #define PDFGEN_GMAIL_SEND_H
-#define PDFGEN_GMAIL_SEND_API 3
+#define PDFGEN_GMAIL_SEND_API 4
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Sends one mail. Counts must match the array sizes.
- * Returns 0 on success, 1 on failure (message on stderr). */
+/* Transport parameters: host/port/TLS variant and auth mechanism. The
+ * providers' values live in mail_config.cpp; this struct keeps the C module
+ * provider-agnostic. */
+typedef struct {
+  const char *host;      /* e.g. "smtp.gmail.com" */
+  int         port;      /* 465 (ssl=1) or 587 (ssl=0, STARTTLS) */
+  int         ssl;       /* 1 = implicit TLS (smtps://), 0 = STARTTLS */
+  int         xoauth2;   /* 1 = token is an OAuth2 bearer (XOAUTH2) */
+} smtp_transport;
+
+/* Sends one mail over an explicit transport. Counts must match the array
+ * sizes. Returns 0 on success, 1 on failure (message via log sink). */
+int send_mail_ex(const smtp_transport *tr,
+                 const char *from,
+                 const char *password,
+                 const char **to,   int n_to,
+                 const char **cc,   int n_cc,
+                 const char *subject,
+                 const char *body_text,
+                 const char **files, int n_files);
+
+/* Sends one mail via Gmail (kept for compatibility; forwards to
+ * send_mail_ex with the Gmail transport). */
 int send_mail(const char *from,
               const char *password,
               const char **to,   int n_to,     /* visible recipients   */
@@ -59,6 +80,35 @@ void pdfgen_mail_global_cleanup(void);
 #include <vector>
 
 namespace pdfgen_mail {
+
+struct Transport {
+  std::string host;
+  int port = 465;
+  bool ssl = true;
+  bool xoauth2 = false;
+};
+
+inline int send(const Transport& tr,
+                const std::string& from, const std::string& password,
+                const std::vector<std::string>& to,
+                const std::vector<std::string>& cc,
+                const std::string& subject, const std::string& body,
+                const std::vector<std::string>& attachments) {
+  auto ptrs = [](const std::vector<std::string>& v) {
+    std::vector<const char*> p;
+    p.reserve(v.size());
+    for (const auto& s : v) p.push_back(s.c_str());
+    return p;
+  };
+  std::vector<const char*> pt = ptrs(to), pc = ptrs(cc), pa = ptrs(attachments);
+  smtp_transport c{tr.host.c_str(), tr.port, tr.ssl ? 1 : 0,
+                   tr.xoauth2 ? 1 : 0};
+  return send_mail_ex(&c, from.c_str(), password.c_str(),
+                      pt.data(), (int)pt.size(),
+                      pc.data(), (int)pc.size(),
+                      subject.c_str(), body.c_str(),
+                      pa.data(), (int)pa.size());
+}
 
 inline int send(const std::string& from, const std::string& password,
                 const std::vector<std::string>& to,

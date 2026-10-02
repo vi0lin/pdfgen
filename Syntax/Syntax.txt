@@ -161,7 +161,7 @@ END — Zahl = absolut; ›+N‹ = START+N (einschließlich, ›:10:+4‹ liefer
 
 ## 13. Projekte: mehrere PDFs und Mails aus einer Quelle
 
-›  \pdfgen Quelle.txt, file=Name.pdf‹ beendet das aktuelle Dokument und startet das nächste (ohne Quelle: die folgenden Zeilen sind der Inhalt; margins=… setzt dessen Ränder). ›\mail Name, to=a@x b@y, cc=…, attachment=…, test=…‹ definiert eine E-Mail: erste Zeile danach = Betreff, Rest bis zum nächsten Tag = Text; ›\attach mail=Name, file=X.pdf‹ hängt weitere Dateien an. Versand: ›pdfgen . --mail‹ (alle), ›--mail Name1 Name2‹ (Auswahl), ›--mail-test‹ (nur an die test=-Adresse, Betreff mit \[TEST\]-Präfix). Ohne jegliche Projekt-Tags gilt: Verzeichnis → Bewerbung.pdf, ›pdfgen Beispiel.txt‹ → Beispiel.pdf. Am Ende dieser Datei folgt live ein zweites Dokument samt Mail-Definition — deshalb existiert nach dem Rendern auch SyntaxTeil.pdf.
+›  \pdfgen Quelle.txt, file=Name.pdf‹ beendet das aktuelle Dokument und startet das nächste (ohne Quelle: die folgenden Zeilen sind der Inhalt; margins=… setzt dessen Ränder). ›\mail Name, to=a@x b@y, cc=…, attachment=…, test=…‹ definiert eine E-Mail: erste Zeile danach = Betreff, Rest bis zum nächsten Tag = Text; ›\attach mail=Name, file=X.pdf‹ hängt weitere Dateien an. Versand: ›pdfgen . --mail‹ (alle), ›--mail Name1 Name2‹ (Auswahl), ›--mail-test‹ (nur an die test=-Adresse, Betreff mit \[TEST\]-Präfix). Absenderkonten liegen in pdfgen.conf: neben Gmail auch outlook, gmx, web.de, t-online, yahoo, icloud sowie ›\[smtp HOST:PORT\]‹ für beliebige Server und das Flag xoauth2 für OAuth2-Token; ›--sender ADRESSE TOKEN‹ erkennt den Anbieter an der Domain, ›--mail-accounts‹ zeigt die aufgelösten Konten. Ohne jegliche Projekt-Tags gilt: Verzeichnis → Bewerbung.pdf, ›pdfgen Beispiel.txt‹ → Beispiel.pdf. Am Ende dieser Datei folgt live ein zweites Dokument samt Mail-Definition — deshalb existiert nach dem Rendern auch SyntaxTeil.pdf.
 
 ## 14. Styles: forward, style=, name=, clean
 
@@ -179,6 +179,40 @@ Jedes Element kann seine Parameter wiederverwendbar machen. ›name=Stil1‹ spe
 \t clean
 | Vierte | clean: ohne Vererbung, forward ab hier beendet |
 \\t
+
+## 15. Parsing schalten: \off und \on
+
+›\off‹ schaltet das Parsing aus: ab dort erscheint jede Zeile wörtlich im PDF (Tags, Tabellen, Platzhalter bleiben sichtbar), bis auf gleicher Ebene ›\on‹ folgt. Als Zeilen-Präfix gilt der Schalter für genau diese Zeile — außer dahinter beginnt ein Block: ›\off \t …‹ macht die ganze Tabelle bis zu ihrem Ende wörtlich. In \t, \loop und \file wirkt ein freistehender Schalter bis zum Elementende, dann kehrt der vorherige Zustand zurück; ›\on D=…‹ wirkt bis zum nächsten Delimiter. ›\on!‹/›\off!‹ erzwingen den Zustand durch alle offenen Ebenen. Ausgeschaltete Platzhalterzeilen bewegen den Loop-Cursor nicht. Live — der Quelltext einer Tabelle als Text, nur die Überschrift echt:
+
+\off
+\t grid=on, widths=1:2
+| Name | E-Mail |
+\on ##### Echte kleine Überschrift mitten im Literalblock
+\loop kontakte.txt
+| :0 | :1 |
+\\loop
+\\t
+\on
+
+## 16. GitHub-Markdown
+
+pdfgen versteht die gängige GitHub-Syntax — in .txt-Dateien zusätzlich zur eigenen, und ganze .md-Dateien rendern direkt zu PDF (›pdfgen README.md‹ → README.pdf; ein Verzeichnis darf statt text.txt auch text.md enthalten). Überschriften und Tabellen sind ohnehin dieselbe Syntax. Es gibt **fett**, *kursiv*, ~~durchgestrichen~~ und `inline code`; Backslash entschärft \* \_ \` \~. Listen mit - oder 1., zwei Leerzeichen rücken eine Ebene ein, - \[ \] und - \[x\] werden Kästchen:
+
+- Ein Punkt mit `code`
+  - verschachtelt
+- [x] erledigt
+
+> Blockzitate mit **Markup**, darunter eine Trennlinie aus drei Strichen:
+
+---
+
+Codeblöcke zwischen drei Backticks bleiben wörtlich (Einrückung erhalten):
+
+```
+\t grid=on   ← wird NICHT zur Tabelle
+```
+
+\[Text\](url) und Autolinks in spitzen Klammern werden klickbar: [Beispiel-Link](https://example.com). Nur in .md-Dateien gilt zudem die Markdown-Zeilenlogik: einfache Umbrüche fließen zusammen, ein harter Umbruch braucht zwei Leerzeichen am Zeilenende — .txt behält die pdfgen-Regel (jeder Umbruch ist hart). Einzige echte Verhaltensänderung in .txt: eine Zeile aus nur Strichen/Sternen (ab drei) ist jetzt eine Trennlinie, und ein Stern/Minus mit Leerzeichen am Zeilenanfang beginnt eine Liste — wer das wörtlich braucht, nutzt \off oder den Backslash-Escape.
 
 Damit ist jeder Tag einmal erklärt und vorgeführt. Diese Quelldatei selbst ist das beste Beispiel: einfach neben die eigene text.txt legen und nachschlagen.
 \pdfgen file=SyntaxTeil.pdf

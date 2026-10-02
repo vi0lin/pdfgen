@@ -7,9 +7,18 @@
 //   [gmail default]        <- Anbieter + optional "default"
 //   ich@gmail.com          <- 1. Zeile: Adresse
 //   abcd efgh ijkl mnop    <- 2. Zeile: App-Passwort/Token (Leerzeichen egal)
-//   [gmail]
-//   zweit@gmail.com
-//   qrstuvwxyzabcdef
+//   [outlook]              <- weitere Anbieter: outlook/office365, gmx,
+//   chef@outlook.com          web.de, t-online, yahoo, icloud -- Host,
+//   app-passwort              Port und TLS-Variante sind hinterlegt
+//   [gmx]
+//   ich@gmx.de
+//   app-passwort
+//   [smtp mail.firma.de:587 starttls]   <- beliebiger SMTP-Server;
+//   ich@firma.de                           Varianten: HOST:465 ssl,
+//   passwort                               HOST:587 starttls (Standard)
+//   [gmail xoauth2]        <- Flag xoauth2: die Token-Zeile ist ein
+//   oauth@gmail.com           OAuth2-Bearer-Token (XOAUTH2) statt eines
+//   ya29....                  Passworts -- fuer Konten ohne App-Passwort
 //   [test]                 <- Empfaenger fuer --mail-test (wenn die
 //   test@example.com          [mail]-Definition kein test= hat)
 //
@@ -23,7 +32,7 @@
 // Ausgewaehlt wird ein Konto per [mail=Name, from=adresse] bzw.
 // \mail Name, from=adresse. Ohne from= gilt das Standardkonto.
 #pragma once
-#define PDFGEN_MAIL_CONFIG_API 1
+#define PDFGEN_MAIL_CONFIG_API 2
 
 #include <string>
 #include <vector>
@@ -31,11 +40,27 @@
 namespace pdfgen {
 
 struct MailAccount {
-  std::string provider = "gmail";   // spaeter: smtp, outlook, ...
+  std::string provider = "gmail";   // gmail, outlook, gmx, webde, tonline,
+                                    // yahoo, icloud, smtp (= eigener Server)
   std::string address;
-  std::string token;                // App-Passwort / PAT
-  bool isDefault = false;
+  std::string token;                // App-Passwort / OAuth2-Bearer
+  std::string host;                 // leer = Anbieter-Standard
+  int         port = 0;             // 0 = Anbieter-Standard
+  bool        ssl = false;          // true: implizites TLS (465, smtps://)
+                                    // false: STARTTLS auf 587
+  bool        xoauth2 = false;      // Token ist OAuth2-Bearer (XOAUTH2)
+  bool        isDefault = false;
 };
+
+// Traegt Host/Port/TLS des Anbieters ein, wo das Konto nichts vorgibt.
+// Unbekannter provider ohne host -> false (+ Warnung).
+bool resolveAccount(MailAccount& a, std::vector<std::string>& warnings);
+
+// Anbieter anhand der Mail-Domain raten (fuer --sender ADDR TOKEN):
+// gmail.com/googlemail.com -> gmail; outlook/hotmail/live/office365 ->
+// outlook; gmx.* -> gmx; web.de -> webde; t-online.de -> tonline;
+// yahoo.* -> yahoo; icloud.com/me.com/mac.com -> icloud; sonst "".
+std::string providerForAddress(const std::string& address);
 
 struct MailConfig {
   std::vector<MailAccount> accounts;

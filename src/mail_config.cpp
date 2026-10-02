@@ -2,6 +2,8 @@
 #include "pdfgen_host.h"
 
 #include <cctype>
+#include <cstring>
+#include <cstdlib>
 #include <mutex>
 #include <sstream>
 
@@ -117,12 +119,24 @@ bool parseMailConfig(const std::string& text, MailConfig& cfg,
     if (t.front() == '[' && t.back() == ']') {
       flush();
       std::stringstream hs(lower(t.substr(1, t.size() - 2)));
-      std::string w, provider;
-      bool def = false;
+      std::string w, provider, host;
+      int port = 0;
+      bool def = false, ssl = false, starttls = false, xo = false;
       while (hs >> w) {
-        if (w == "default" || w == "standard") def = true;
-        else if (provider.empty()) provider = w;
+        if      (w == "default" || w == "standard") def = true;
+        else if (w == "ssl" || w == "smtps")        ssl = true;
+        else if (w == "starttls")                    starttls = true;
+        else if (w == "xoauth2" || w == "oauth2")   xo = true;
+        else if (provider.empty())                   provider = w;
+        else if (host.empty()) {                     // smtp HOST[:PORT]
+          size_t c = w.find(':');
+          host = w.substr(0, c);
+          if (c != std::string::npos) port = std::atoi(w.c_str() + c + 1);
+        } else if (port == 0 && std::isdigit((unsigned char)w[0])) {
+          port = std::atoi(w.c_str());               // smtp HOST PORT
+        }
       }
+      (void)starttls;                                // default anyway
       if (provider == "test") {
         sec = Sec::Test;
       } else if (provider.empty() && !def) {
@@ -133,6 +147,10 @@ bool parseMailConfig(const std::string& text, MailConfig& cfg,
         sec = Sec::Account;
         cur = MailAccount{};
         cur.provider = provider.empty() ? "gmail" : provider;
+        cur.host = host;
+        cur.port = port;
+        cur.ssl = ssl;
+        cur.xoauth2 = xo;
         cur.isDefault = def;
         curLines = 0;
       }
@@ -198,6 +216,69 @@ void setMailConfig(const MailConfig& cfg) {
 MailConfig mailConfig() {
   std::lock_guard<std::mutex> lk(g_mx);
   return g_cfg;
+}
+
+
+// ---- Anbieter-Profile ---------------------------------------------------
+namespace {
+struct Provider { const char* name; const char* host; int port; bool ssl; };
+const Provider kProviders[] = {
+  {"gmail",   "smtp.gmail.com",          465, true },
+  {"outlook", "smtp.office365.com",      587, false},
+  {"office365","smtp.office365.com",     587, false},
+  {"gmx",     "mail.gmx.net",            587, false},
+  {"webde",   "smtp.web.de",             587, false},
+  {"web.de",  "smtp.web.de",             587, false},
+  {"tonline", "securesmtp.t-online.de",  465, true },
+  {"t-online","securesmtp.t-online.de",  465, true },
+  {"yahoo",   "smtp.mail.yahoo.com",     465, true },
+  {"icloud",  "smtp.mail.me.com",        587, false},
+};
+} // namespace
+
+bool resolveAccount(MailAccount& a, std::vector<std::string>& warnings) {
+  if (!a.host.empty()) {
+    if (a.port == 0) a.port = a.ssl ? 465 : 587;
+    return true;
+  }
+  for (const auto& p : kProviders) {
+    if (a.provider == p.name) {
+      a.host = p.host;
+      if (a.port == 0) a.port = p.port;
+      // explizites ssl/starttls im Header gewinnt gegen das Profil
+      if (!a.ssl) a.ssl = p.ssl;
+      return true;
+    }
+  }
+  warnings.push_back("mail config: unbekannter Anbieter '" + a.provider +
+                     "' fuer " + a.address +
+                     " -- [smtp HOST:PORT (ssl)] verwenden");
+  return false;
+}
+
+std::string providerForAddress(const std::string& address) {
+  size_t at = address.find('@');
+  if (at == std::string::npos) return "";
+  std::string d = lower(address.substr(at + 1));
+  auto has = [&](const char* dom) {
+    size_t n = std::strlen(dom);
+    return d == dom ||
+           (d.size() > n && d.compare(d.size() - n - 1, n + 1,
+                                      std::string(".") + dom) == 0);
+  };
+  if (has("gmail.com") || has("googlemail.com"))            return "gmail";
+  if (has("outlook.com") || has("outlook.de") ||
+      has("hotmail.com") || has("hotmail.de") ||
+      has("live.com") || has("live.de") || has("office365.com"))
+    return "outlook";
+  if (d == "gmx.de" || d == "gmx.net" || d == "gmx.at" ||
+      d == "gmx.ch" || d == "gmx.com")                      return "gmx";
+  if (has("web.de"))                                        return "webde";
+  if (has("t-online.de") || has("magenta.de"))              return "tonline";
+  if (has("yahoo.com") || has("yahoo.de") || has("ymail.com"))
+    return "yahoo";
+  if (has("icloud.com") || has("me.com") || has("mac.com")) return "icloud";
+  return "";
 }
 
 } // namespace pdfgen
