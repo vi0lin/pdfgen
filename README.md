@@ -173,6 +173,17 @@ keep-together group per record. Data files are read verbatim; out-of-range
 fields warn once per loop and insert nothing. JSON input (`\jloop`) is
 planned but deliberately postponed.
 
+**Parsing on/off (verbatim mode):** `\off` renders every following line as
+literal text (tags, tables, placeholders stay visible) until `\on` at the
+same level. As a line prefix the switch applies to exactly that line
+(`\on # Titel` renders one real heading inside an off block) — unless the
+rest opens a block: `\off \t …` makes the whole table literal until `\\t`.
+Inside `\t`/`\loop`/`\file` a standalone switch lasts until the element
+ends, then the previous state returns; `\on D=\n\n` lasts until the next
+blank line (any delimiter string works, matched against whole lines).
+`\on!`/`\off!` force the state through all open levels; later switches
+still work. Literal placeholder lines do not move the loop cursor.
+
 **`\file` and the range syntax:** `\file datei.txt(, D=...)` … `\\file` is
 `\loop` without iteration — one pass, the fields are ALL lines of the file
 (global numbering). Both tags share one placeholder grammar

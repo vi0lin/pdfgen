@@ -1,10 +1,17 @@
 #include "markup.h"
+#include <algorithm>   // std::count/min/max (MSVC does not pull this in transitively)
 #include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <fstream>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX            // keep windows.h from macro-izing min/max
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #else
 #include <sys/stat.h>

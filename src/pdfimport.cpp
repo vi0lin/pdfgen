@@ -1,4 +1,5 @@
 #include "pdfimport.h"
+#include <algorithm>   // std::count/min/max (MSVC does not pull this in transitively)
 
 #include <cstdint>
 #include <cstring>

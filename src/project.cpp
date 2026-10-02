@@ -14,7 +14,7 @@
 // ---- release consistency check ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_MARKUP_API != 15
+#elif PDFGEN_MARKUP_API != 16
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release."
 #endif
 #ifndef PDFGEN_FLOWABLES_API

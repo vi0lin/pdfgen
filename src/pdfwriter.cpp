@@ -1,4 +1,5 @@
 #include "pdfwriter.h"
+#include <algorithm>   // std::count/min/max (MSVC does not pull this in transitively)
 #include "pdfimport.h"
 #include "ttffont.h"
 #include <zlib.h>
