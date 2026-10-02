@@ -373,7 +373,8 @@ deliberately created empty page right before the merge.
 | `[date]` / `[datum]` | today's date, default `DD.MM.YYYY` |
 | `[date, format="WEEKDAY, D. MONTH YYYY", lang=de]` | formatted date. Tokens `YYYY YY MM M DD D MONTH MON WEEKDAY WD`; `lang` = `en de ru pl es` (ru/pl month names in the genitive). Quote formats containing commas |
 | `[date, modified=1, ...]` | frozen date: the output PDF's creation time once it exists (Linux `statx` birth time, Windows creation time, fallback mtime), otherwise today |
-| `[bild.png, width=3*cm]` | image; `width`/`height` (one = proportional, both = exact), units `cm mm inch pica pt`, default 5×5 cm |
+| `[bild.png]` / `\i bild.png` | image at its NATURAL size (pixels at 96 dpi, the CSS/Word convention); wider than the text area is scaled down proportionally |
+| `[bild.png, width=3*cm]` | `width`/`height` (one = proportional, both = exact), units `cm mm inch pica pt` |
 | `[bild.png, ..., align=center]` | left/center/right (German `ausrichtung`, `mitte`…) |
 | `[bild.png, ..., float=left]` | the following paragraph wraps around the image (also `right`) |
 | `[bild.png, ..., x=11*cm, y=3*cm]` | absolute position from the LEFT/TOP page edge; floats over the text, occupies no flow space |

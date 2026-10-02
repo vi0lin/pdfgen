@@ -372,7 +372,13 @@ ImageFlow::ImageFlow(const std::string& path, double wPt, double hPt,
   double aspect = img_.widthPx > 0 ? (double)img_.heightPx / img_.widthPx : 1.0;
   if (reqW_ > 0 && reqH_ <= 0)      reqH_ = reqW_ * aspect;   // proportional
   else if (reqH_ > 0 && reqW_ <= 0) reqW_ = reqH_ / aspect;   // fill-in
-  else if (reqW_ <= 0 && reqH_ <= 0) { reqW_ = 5 * CM; reqH_ = 5 * CM; }
+  else if (reqW_ <= 0 && reqH_ <= 0) {
+    // no dimension given: the image's natural size (pixels at 96 dpi,
+    // the CSS/Word convention); wider than the text area is clamped
+    // proportionally by wrap() as usual
+    reqW_ = img_.widthPx * 72.0 / 96.0;
+    reqH_ = img_.heightPx * 72.0 / 96.0;
+  }
   effW_ = reqW_; effH_ = reqH_;
 }
 

@@ -585,10 +585,12 @@ std::string mdInline(const std::string& line) {
       i += 2;
       continue;
     }
+    auto wordy = [&](size_t k) {
+      return k < n && (std::isalnum((unsigned char)line[k]) || line[k] == '.');
+    };
     if ((c == '*' || c == '_') &&
-        // intraword underscores stay literal (file_name_x)
-        !(c == '_' && i > 0 && std::isalnum((unsigned char)line[i - 1]) &&
-          i + 1 < n && std::isalnum((unsigned char)line[i + 1]))) {
+        // intraword stars/underscores stay literal: 3.3*cm, file_name_x
+        !(i > 0 && wordy(i - 1) && wordy(i + 1))) {
       // emphasis only when it can open before/close after non-space
       bool canOpen  = i + 1 < n && !std::isspace((unsigned char)line[i + 1]);
       bool canClose = ital && i > 0 && !std::isspace((unsigned char)line[i - 1]);
@@ -774,8 +776,14 @@ std::string translateMarkdown(const std::string& text, bool mdLineSemantics,
       }
     }
 
-    // plain line: inline markdown; md files additionally join soft lines
-    std::string conv = tagLine || inTable ? mdInline(raw) : mdInline(raw);
+    // plain line: inline markdown; whole-line tags stay untouched so no
+    // parameter (width=3.3*cm, urls, formats) can ever be mangled
+    bool protectedTag =
+        !t.empty() &&
+        (t[0] == '\\' ||
+         (t[0] == '[' && t.back() == ']'));   // whole-line bracket tag;
+                                             // "[Link](url) ..." stays markdown
+    std::string conv = protectedTag ? raw : mdInline(raw);
     if (mdLineSemantics && !inTable && !tagLine && !t.empty()) {
       bool hardBreak = raw.size() >= 2 &&
                        raw.compare(raw.size() - 2, 2, "  ") == 0;
