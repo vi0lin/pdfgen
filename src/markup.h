@@ -12,6 +12,21 @@
 // Adding a new tag type = one new Token::Kind + one case in each stage.
 //
 // Recognized input syntax (unchanged from the Python version):
+//   \off / \on                   switch PARSING off/on. While off, every
+//                                 line is rendered as literal text (tags,
+//                                 tables, placeholders stay visible). As a
+//                                 line prefix the switch applies to exactly
+//                                 that line (\on # Titel renders one real
+//                                 heading inside an off block) -- unless the
+//                                 rest starts a block (\off \t ... makes the
+//                                 WHOLE table literal until \\t). Inside
+//                                 \t/\loop/\file a standalone switch lasts
+//                                 until that element ends, then the previous
+//                                 state returns; \on D=\n\n lasts until the
+//                                 next blank line (any delimiter string
+//                                 works, matched against whole lines).
+//                                 \on! / \off! force the state through ALL
+//                                 open levels (later switches still work).
 //   \[  \]                       literal square brackets in the output —
 //                                 never interpreted as a tag anywhere
 //   // Kommentar                  a line starting with // (after optional
@@ -120,7 +135,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_MARKUP_API 15
+#define PDFGEN_MARKUP_API 16
 #include <functional>
 #include <string>
 #include <vector>

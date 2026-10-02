@@ -15,7 +15,7 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: it lacks PDFGEN_MARKUP_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_MARKUP_API != 15
+#elif PDFGEN_MARKUP_API != 16
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
@@ -363,6 +363,162 @@ std::string translateBackslashTags(const std::string& text,
 // \[ and \] produce literal brackets: swapped to sentinel bytes here so no
 // pipeline stage (includes, dates, tokenizer, cells) can mistake them for a
 // tag, and swapped back just before the text reaches a paragraph.
+// ---- \on / \off: verbatim mode ---------------------------------------------------
+// Runs before every other stage. Literal lines get a \x03 prefix plus
+// [ ] -> \x01/\x02 so no later stage interprets them; the tokenizer strips
+// the prefix and treats such lines as plain text.
+namespace {
+
+std::string unescapeDelim(const std::string& v);   // defined with \loop below
+
+struct OnOffScope {
+  enum Kind { Table, Loop, File, Delim } kind;
+  bool saved;                 // state to restore when the scope closes
+  std::string delim;          // Delim: raw delimiter string
+  int blankRun = 0;           // Delim with \n-only delimiters
+};
+
+std::string literalLine(const std::string& line) {
+  std::string out;
+  out += '\x03';
+  for (char c : line) {
+    if (c == '[') out += '\x01';
+    else if (c == ']') out += '\x02';
+    else out += c;
+  }
+  return out;
+}
+
+// which block does this (trimmed, lowercased) line start / end?
+int blockStart(const std::string& low) {          // 1 table, 2 loop, 3 file
+  auto word = [&](const char* w) {
+    size_t n = std::strlen(w);
+    return low.rfind(w, 0) == 0 &&
+           (low.size() == n || low[n] == ' ' || low[n] == ',' || low[n] == '\t');
+  };
+  if (word("\\t") || word("\\table") || word("\\tabelle")) return 1;
+  if (word("\\loop")) return 2;
+  if (word("\\file")) return 3;
+  return 0;
+}
+int blockEnd(const std::string& low) {
+  if (low == "\\\\t" || low == "\\\\table" || low == "\\\\tabelle") return 1;
+  if (low == "\\\\loop") return 2;
+  if (low == "\\\\file") return 3;
+  return 0;
+}
+
+std::string processOnOff(const std::string& text,
+                         std::vector<std::string>& warnings) {
+  if (text.find("\\on") == std::string::npos &&
+      text.find("\\off") == std::string::npos)
+    return text;                                   // fast path
+
+  std::vector<std::string> lines;
+  {
+    std::stringstream ss(text);
+    std::string l;
+    while (std::getline(ss, l)) {
+      if (!l.empty() && l.back() == '\r') l.pop_back();
+      lines.push_back(l);
+    }
+  }
+  bool state = true;                               // parsing on
+  std::vector<OnOffScope> scopes;
+  std::string out;
+  auto emit = [&](const std::string& l) { out += l; out += '\n'; };
+
+  for (auto& raw : lines) {
+    std::string t = trim(raw);
+    std::string low = toLower(t);
+
+    // delimiter scopes close on matching SOURCE lines (before anything else)
+    if (!scopes.empty() && scopes.back().kind == OnOffScope::Delim) {
+      auto& d = scopes.back();
+      bool hit = false;
+      bool nlOnly = !d.delim.empty() &&
+                    d.delim.find_first_not_of('\n') == std::string::npos;
+      if (nlOnly) {
+        if (t.empty()) {
+          if (++d.blankRun >= (int)d.delim.size() - 1) hit = true;
+        } else d.blankRun = 0;
+      } else if (t == d.delim) hit = true;
+      if (hit) { state = d.saved; scopes.pop_back(); }
+    }
+
+    // leading \on / \off token?
+    bool tok = false, tokState = true, force = false;
+    std::string rest;
+    if (low.rfind("\\on", 0) == 0 || low.rfind("\\off", 0) == 0) {
+      size_t n = low.rfind("\\off", 0) == 0 ? 4 : 3;
+      tokState = n == 3;
+      if (n <= t.size() && t.size() > n && t[n] == '!') { force = true; ++n; }
+      if (t.size() == n || t[n] == ' ' || t[n] == '\t') {
+        tok = true;
+        rest = trim(t.substr(n));
+      }
+    }
+
+    if (tok) {
+      // "D=..." option on a standalone switch: delimiter-bounded scope
+      std::string lrest = toLower(rest);
+      if (!rest.empty() &&
+          (lrest.rfind("d=", 0) == 0 || lrest.rfind("delim=", 0) == 0 ||
+           lrest.rfind("trenner=", 0) == 0)) {
+        OnOffScope sc{OnOffScope::Delim, state, {}, 0};
+        sc.delim = unescapeDelim(trim(rest.substr(rest.find('=') + 1)));
+        scopes.push_back(sc);
+        state = tokState;
+        continue;
+      }
+      if (force) {
+        for (auto& sc : scopes) sc.saved = tokState;   // through all levels
+        state = tokState;
+        if (rest.empty()) continue;
+      }
+      if (rest.empty()) { state = tokState; continue; }
+
+      // prefix form: applies to this line -- or to the whole block it opens
+      std::string rlow = toLower(rest);
+      if (int b = blockStart(rlow)) {
+        scopes.push_back({(OnOffScope::Kind)(b - 1), state, {}, 0});
+        state = tokState;
+        if (state) emit(rest);
+        else emit(literalLine(rest));
+        continue;
+      }
+      if (tokState) emit(rest);                     // one line on
+      else emit(literalLine(rest));                 // one line off
+      continue;
+    }
+
+    // block structure (tracked in BOTH states, so inner switches can scope)
+    if (int b = blockStart(low)) {
+      scopes.push_back({(OnOffScope::Kind)(b - 1), state, {}, 0});
+      if (state) emit(raw); else emit(literalLine(raw));
+      continue;
+    }
+    if (int b = blockEnd(low)) {
+      if (state) emit(raw); else emit(literalLine(raw));
+      for (size_t i = scopes.size(); i-- > 0;) {
+        if ((int)scopes[i].kind == b - 1) {
+          state = scopes[i].saved;
+          scopes.resize(i);
+          break;
+        }
+      }
+      continue;
+    }
+
+    if (state || t.empty()) emit(raw);
+    else emit(literalLine(raw));
+  }
+  if (!text.empty() && text.back() != '\n' && !out.empty()) out.pop_back();
+  return out;
+}
+
+} // namespace
+
 static std::string escapeLiteralBrackets(const std::string& text) {
   std::string out;
   for (size_t i = 0; i < text.size(); ++i) {
@@ -380,6 +536,7 @@ std::string unescapeLiteralBrackets(const std::string& text) {
   for (char c : text) {
     if (c == '\x01') out += '[';
     else if (c == '\x02') out += ']';
+    else if (c == '\x03') continue;               // verbatim-line marker
     else out += c;
   }
   return out;
@@ -561,7 +718,8 @@ std::string applyStyles(const std::string& text,
 std::string preprocessSource(const std::string& text, bool embedded,
                              std::vector<std::string>& warnings) {
   std::stringstream ss(applyStyles(
-      escapeLiteralBrackets(translateBackslashTags(text, warnings)), warnings));
+      escapeLiteralBrackets(translateBackslashTags(
+          processOnOff(text, warnings), warnings)), warnings));
   std::string line, out;
   bool skipTableRows = false;
   std::vector<bool> condStack;                   // \c blocks
@@ -732,6 +890,7 @@ bool parseRangeValue(const std::string& line, size_t& j, const FieldCtx& ctx,
 std::string substFields(const std::string& line, FieldCtx& ctx,
                         const char* tagName,
                         std::vector<std::string>& warnings) {
+  if (!line.empty() && line[0] == '\x03') return line;   // verbatim line
   std::string out;
   size_t i = 0;
   long n = (long)ctx.fields.size();
@@ -1431,6 +1590,13 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
     if (!line.empty() && line.back() == '\r') line.pop_back();
 
     if (blockTable) {                               // inside \t ... \\t
+      if (!line.empty() && line[0] == '\x03') {    // verbatim: full-width text
+        std::string lit = trim(line.substr(1));
+        if (lit.empty()) { flushPartialRows(); continue; }
+        fullWidthRow += fullWidthRow.empty() ? ('\x03' + lit)
+                                             : "\n\x03" + lit;
+        continue;
+      }
       std::string bt = trim(line);
       std::string btl = toLower(bt);
       if (bt.empty()) { flushPartialRows(); continue; }
@@ -1485,6 +1651,16 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
     }
     flushBreak();                                   // emit accumulated gap
     anyContent = true;
+
+    {   // verbatim text line (\on/\off pass)
+      std::string vt = trim(line);
+      if (!vt.empty() && vt[0] == '\x03') {
+        flushTable();
+        pendingText += vt.substr(1);               // sentinel stripped
+        pendingText += '\n';                       // hard break
+        continue;
+      }
+    }
 
     {   // \t options — block-style table until \\t
       std::string bt = trim(line);
@@ -1961,8 +2137,10 @@ static pdf::FlowList buildFlowablesInner(const std::vector<Token>& tokens,
         // detection in tokenize() never sees cell content); the cell's
         // column alignment is kept
         std::string title;
+        bool verbatimSeg = segs[k].text.find('\x03') != std::string::npos;
         segs[k].text = unescapeLiteralBrackets(segs[k].text);
-        if (int lvl = headingLevel(segs[k].text, title)) {
+        if (int lvl = !verbatimSeg ? headingLevel(segs[k].text, title) : 0;
+            lvl && true) {
           Style hs = styles::heading(lvl);
           hs.align = st.align;
           hs.spaceBefore = hs.spaceAfter = 0;   // rows size by content only
