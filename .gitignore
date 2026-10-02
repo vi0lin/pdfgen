@@ -12,3 +12,10 @@ pdfgen.conf
 .xbm-sync/
 .xbm-run.sh
 .xbm-exec.sh
+.deps-cache/
+stand.zip
+.stand-liste
+build.sh
+publish_release.sh
+toolchains/
+build.sh.conf.unreleased
