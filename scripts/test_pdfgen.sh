@@ -56,6 +56,14 @@ printf '\\file d.txt\n:0:+1\n\\\\file\n' > "$TMP/f.txt"
 printf '\\off\n\\t nur Text\n\\on\nEnde.\n' > "$TMP/o.txt"
 "$BIN" "$TMP/o.txt" >/dev/null 2>&1 && [ -s "$TMP/o.pdf" ] && ok "\\off/\\on Verbatim" || bad "\\off/\\on"
 
+# ---- 2b) Serienbrief (examples/mailmerge) -----------------------------------
+if [ -f examples/mailmerge/text.txt ]; then
+  cp -r examples/mailmerge "$TMP/mm"
+  OUT=$("$BIN" "$TMP/mm" --mail-list 2>/dev/null)
+  echo "$OUT" | grep -q "Kunde2" && [ -s "$TMP/mm/Angebot-2.pdf" ]     && ok "Mail-Merge (jloop/jload/\c)" || bad "Mail-Merge"
+  [ ! -e "$TMP/mm/Info-2.pdf" ] && ok "Merge-Bedingung (kein Datensatz -> kein PDF)"     || bad "Merge-Bedingung"
+fi
+
 # ---- 3) Mail-Konten-Aufloesung (sendet nichts) ------------------------------
 printf '[gmx]\nich@gmx.de\ntoken\n' > "$TMP/m.conf"
 "$BIN" -c "$TMP/m.conf" --mail-accounts 2>/dev/null | grep -q "mail.gmx.net:587" \

@@ -72,7 +72,7 @@
 // sources produce <basename>.pdf next to the source, e.g.
 // `pdfgen Example.txt` -> Example.pdf.
 #pragma once
-#define PDFGEN_PROJECT_API 4
+#define PDFGEN_PROJECT_API 5
 
 #include <string>
 #include <vector>
@@ -125,6 +125,12 @@ bool renderDocument(const std::string& baseDir, const std::string& sourceText,
 
 // Convenience: process one CLI source (directory or .txt file): parse,
 // render every document, and append the mails to `mails`.
+// Mail-merge expansion (\mloop, \jloop, \jload, $placeholders) -- runs on
+// the raw main source before documents/mails are split. processSource calls
+// this itself; exposed for hosts that assemble sources in memory.
+std::string expandMailMerge(const std::string& text, const std::string& baseDir,
+                            std::vector<std::string>& warnings);
+
 bool processSource(const std::string& cliArg, std::vector<MailSpec>& mails,
                    std::vector<std::string>& warnings);
 

@@ -1,4 +1,5 @@
 #include "project.h"
+#include "jsondata.h"
 
 #include <cctype>
 #include <fstream>
@@ -14,7 +15,7 @@
 // ---- release consistency check ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_MARKUP_API != 17
+#elif PDFGEN_MARKUP_API != 18
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
@@ -286,6 +287,331 @@ bool hasFlag(const Tag& t, const std::string& key) {
 } // namespace
 
 // ---- section parser --------------------------------------------------------
+
+// ==== mail-merge: \jloop / \jload / $placeholders / $-Bedingungen ===========
+// Laeuft auf der ROHEN Hauptquelle, bevor Dokumente/Mails gesplittet werden,
+// damit ein Schleifenkoerper \pdfgen/\mail/\attach vervielfachen kann.
+namespace {
+
+using jsondata::Value;
+
+struct MergeFrame {
+  std::string name;        // "" = aktueller Datensatz ($_, nackte Keys)
+  const Value* value;
+  long index1 = 0;         // 1-basiert fuer $#
+};
+
+struct MergeCtx {
+  std::vector<MergeFrame> frames;
+  std::map<std::string, Value> files;
+
+  const Value* lookup(const std::string& path, long* idx = nullptr) const {
+    for (size_t i = frames.size(); i-- > 0;) {
+      const MergeFrame& f = frames[i];
+      if (path == "_" || path.rfind("_.", 0) == 0 || path.rfind("_[", 0) == 0) {
+        if (!f.name.empty()) continue;
+        if (idx) *idx = f.index1;
+        if (path == "_") return f.value;
+        size_t off = path[1] == '.' ? 2 : 1;
+        return &f.value->at(path.substr(off));
+      }
+      if (!f.name.empty()) {
+        if (path == f.name) { if (idx) *idx = f.index1; return f.value; }
+        if (path.rfind(f.name + ".", 0) == 0 ||
+            path.rfind(f.name + "[", 0) == 0) {
+          size_t off = f.name.size() + (path[f.name.size()] == '.' ? 1 : 0);
+          return &f.value->at(path.substr(off));
+        }
+      } else {
+        const Value& v = f.value->at(path);
+        if (!v.isNull()) { if (idx) *idx = f.index1; return &v; }
+        if (f.value->kind() == Value::Kind::Object)
+          for (const auto& k : f.value->keys())
+            if (k == path) return &f.value->at(path);   // existiert, ist null
+      }
+    }
+    return nullptr;
+  }
+  long currentIndex() const {
+    for (size_t i = frames.size(); i-- > 0;)
+      if (frames[i].name.empty()) return frames[i].index1;
+    return 0;
+  }
+};
+
+bool mergePathChar(char c) {
+  return std::isalnum((unsigned char)c) || c == '_' || c == '.' ||
+         c == '[' || c == ']';
+}
+
+// $pfad / ${pfad} / $# ersetzen; unbekannte Namen bleiben woertlich
+// (so ueberleben \loop-Mementos wie $a und gewoehnliche $-Zeichen).
+std::string mergeSubst(const std::string& line, const MergeCtx& ctx) {
+  std::string out;
+  size_t i = 0, n = line.size();
+  while (i < n) {
+    char c = line[i];
+    if (c != '$') { out += c; ++i; continue; }
+    if (i + 1 < n && line[i + 1] == '#') {
+      long ix = ctx.currentIndex();
+      if (ix > 0) { out += std::to_string(ix); i += 2; continue; }
+      out += c; ++i; continue;
+    }
+    bool braced = i + 1 < n && line[i + 1] == '{';
+    size_t start = i + (braced ? 2 : 1), e = start;
+    if (braced) {
+      e = line.find('}', start);
+      if (e == std::string::npos) { out += c; ++i; continue; }
+    } else {
+      while (e < n && mergePathChar(line[e])) ++e;
+      while (e > start && line[e - 1] == '.') --e;   // Satzpunkt nach $name.
+    }
+    std::string path = line.substr(start, e - start);
+    if (path.empty()) { out += c; ++i; continue; }
+    const Value* v = ctx.lookup(path);
+    if (!v) { out += c; ++i; continue; }
+    out += v->toText();
+    i = e + (braced ? 1 : 0);
+  }
+  return out;
+}
+
+// Bedingung mit $: "$pfad", "!$pfad", "$pfad=wert", "$pfad!=wert".
+// applies sagt, ob der Ausdruck ueberhaupt eine Merge-Bedingung ist.
+bool mergeCond(const std::string& exprIn, const MergeCtx& ctx, bool& applies) {
+  std::string expr = exprIn;
+  applies = expr.find('$') != std::string::npos;
+  if (!applies) return true;
+  bool neg = !expr.empty() && expr[0] == '!';
+  if (neg) expr = expr.substr(1);
+  std::string lit;
+  bool eq = true, hasCmp = false;
+  size_t ne = expr.find("!=");
+  size_t qe = expr.find('=');
+  if (ne != std::string::npos) {
+    hasCmp = true; eq = false;
+    lit = expr.substr(ne + 2); expr = expr.substr(0, ne);
+  } else if (qe != std::string::npos) {
+    hasCmp = true;
+    lit = expr.substr(qe + 1); expr = expr.substr(0, qe);
+  }
+  expr = trim(expr); lit = trim(lit);
+  if (!expr.empty() && expr[0] == '$') expr = expr.substr(1);
+  const Value* v = ctx.lookup(expr);
+  bool r;
+  if (hasCmp) {
+    std::string val = v ? v->toText() : "";
+    std::string want = mergeSubst(lit, ctx);        // $k.email=$_ erlaubt
+    r = (val == want) == eq;
+  } else {
+    r = v && v->truthy();
+  }
+  return neg ? !r : r;
+}
+
+const Value* mergeLoadJson(MergeCtx& ctx, const std::string& baseDir,
+                           const std::string& file,
+                           std::vector<std::string>& warnings) {
+  std::string path = baseDir.empty() ? file : baseDir + "/" + file;
+  auto it = ctx.files.find(path);
+  if (it == ctx.files.end()) {
+    std::string txt = readFile(path);
+    if (txt.empty()) {
+      warnings.push_back("\\jloop/\\jload: kann '" + path + "' nicht lesen");
+      return nullptr;
+    }
+    std::string err;
+    Value v = Value::parse(txt, err);
+    if (!err.empty()) {
+      warnings.push_back("\\jloop/\\jload " + file + ": " + err);
+      return nullptr;
+    }
+    it = ctx.files.emplace(path, std::move(v)).first;
+  }
+  return &it->second;
+}
+
+size_t mergeFindClose(const std::vector<std::string>& lines, size_t open,
+                      const char* openTag, const char* closeTag) {
+  int depth = 1;
+  for (size_t j = open + 1; j < lines.size(); ++j) {
+    std::string lt = toLower(trim(lines[j]));
+    bool opens = lt.rfind(openTag, 0) == 0 &&
+                 lt.rfind(closeTag, 0) != 0;
+    if (opens) ++depth;
+    else if (lt == closeTag && --depth == 0) return j;
+  }
+  return lines.size();
+}
+
+std::string expandMergeJson(const std::vector<std::string>& lines,
+                            size_t from, size_t to, MergeCtx& ctx,
+                            const std::string& baseDir,
+                            std::vector<std::string>& warnings) {
+  std::string out;
+  auto emit = [&](const std::string& l) { out += l; out += '\n'; };
+  size_t frameFloor = ctx.frames.size();            // \jload-Frames hier lokal
+
+  for (size_t li = from; li < to; ++li) {
+    std::string t = trim(lines[li]);
+    std::string low = toLower(t);
+
+    if (low.rfind("\\c", 0) == 0 &&
+        (t.size() == 2 || t[2] == ' ' || t[2] == '\t')) {
+      std::string expr = trim(t.substr(2));
+      bool applies = false;
+      bool hold = mergeCond(expr, ctx, applies);
+      if (applies) {
+        size_t end = mergeFindClose(lines, li, "\\c", "\\\\c");
+        if (end == lines.size()) {
+          warnings.push_back("\\c " + expr + ": \\\\c fehlt");
+          continue;
+        }
+        if (hold)
+          out += expandMergeJson(lines, li + 1, end, ctx, baseDir, warnings);
+        li = end;
+        continue;
+      }
+      emit(mergeSubst(lines[li], ctx));             // normale Bedingung
+      continue;
+    }
+
+    if (low.rfind("\\jload", 0) == 0 &&
+        (t.size() == 6 || t[6] == ' ' || t[6] == '\t' || t[6] == ',')) {
+      std::string rest = trim(t.substr(6));
+      if (!rest.empty() && rest[0] == ',') rest = trim(rest.substr(1));
+      std::string file, matchKey, matchVal, asName = "k";
+      std::stringstream ps(rest);
+      std::string part;
+      bool first = true;
+      while (std::getline(ps, part, ',')) {
+        part = trim(part);
+        size_t eq = part.find('=');
+        std::string key = eq == std::string::npos ? "" :
+            toLower(trim(part.substr(0, eq)));
+        if (first && key != "match" && key != "treffer" &&
+            key != "as" && key != "als") {
+          file = key == "file" || key == "datei" ? trim(part.substr(eq + 1))
+                                                 : part;
+        } else if (key == "match" || key == "treffer") {
+          std::string m = trim(part.substr(eq + 1));
+          size_t meq = m.find('=');
+          matchKey = meq == std::string::npos ? m : trim(m.substr(0, meq));
+          matchVal = meq == std::string::npos ? "" : trim(m.substr(meq + 1));
+        } else if (key == "as" || key == "als") {
+          asName = trim(part.substr(eq + 1));
+        } else if (!part.empty()) {
+          warnings.push_back("\\jload: unbekannte Option: " + part);
+        }
+        first = false;
+      }
+      static const Value kNull;
+      const Value* hit = &kNull;
+      if (const Value* root = mergeLoadJson(ctx, baseDir, file, warnings)) {
+        std::string want = mergeSubst(matchVal, ctx);
+        for (size_t i = 0; i < root->size(); ++i) {
+          const Value& rec = root->index(i);
+          if (matchKey.empty() || rec.at(matchKey).toText() == want) {
+            hit = &rec;
+            break;
+          }
+        }
+      }
+      ctx.frames.push_back({asName, hit, 0});
+      continue;
+    }
+
+    if (low == "\\\\jload") {
+      if (ctx.frames.size() > frameFloor && !ctx.frames.back().name.empty())
+        ctx.frames.pop_back();
+      continue;
+    }
+
+    if (low.rfind("\\jloop", 0) == 0 &&
+        (t.size() == 6 || t[6] == ' ' || t[6] == '\t' || t[6] == ',')) {
+      std::string rest = trim(t.substr(6));
+      if (!rest.empty() && rest[0] == ',') rest = trim(rest.substr(1));
+      std::string src, filter;
+      {
+        std::stringstream ps(rest);
+        std::string part;
+        bool first = true;
+        while (std::getline(ps, part, ',')) {
+          part = trim(part);
+          size_t eq = part.find('=');
+          std::string key = eq == std::string::npos ? "" :
+              toLower(trim(part.substr(0, eq)));
+          if (first && key != "filter") src = part;
+          else if (key == "filter") filter = trim(part.substr(eq + 1));
+          else if (!part.empty())
+            warnings.push_back("\\jloop: unbekannte Option: " + part);
+          first = false;
+        }
+      }
+      size_t end = mergeFindClose(lines, li, "\\jloop", "\\\\jloop");
+      if (end == lines.size()) {
+        warnings.push_back("\\jloop " + src + ": \\\\jloop fehlt");
+        break;
+      }
+      const Value* arr = nullptr;
+      if (!src.empty() && src[0] == '$') {
+        arr = ctx.lookup(src.substr(1));
+        if (!arr)
+          warnings.push_back("\\jloop " + src + ": unbekannter Pfad");
+      } else {
+        arr = mergeLoadJson(ctx, baseDir, src, warnings);
+      }
+      if (arr) {
+        size_t base = ctx.frames.size();
+        long pos = 0;
+        for (size_t i = 0; i < arr->size(); ++i) {
+          const Value& rec = arr->index(i);
+          if (!filter.empty()) {
+            MergeCtx probe;
+            probe.frames = ctx.frames;
+            probe.frames.push_back({"", &rec, pos + 1});
+            bool applies = false;
+            if (!mergeCond(filter, probe, applies)) continue;
+          }
+          ++pos;
+          ctx.frames.push_back({"", &rec, pos});
+          out += expandMergeJson(lines, li + 1, end, ctx, baseDir, warnings);
+          ctx.frames.resize(base);
+        }
+      }
+      li = end;
+      continue;
+    }
+
+    emit(mergeSubst(lines[li], ctx));
+  }
+  ctx.frames.resize(frameFloor);                    // \jload endet am Body
+  return out;
+}
+
+}  // namespace
+
+std::string expandMailMerge(const std::string& text, const std::string& baseDir,
+                            std::vector<std::string>& warnings) {
+  std::string t = text;
+  if (t.find("\\mloop") != std::string::npos)
+    t = markup::expandMergeTextLoops(t, baseDir, warnings);
+  if (t.find("\\jloop") == std::string::npos &&
+      t.find("\\jload") == std::string::npos)
+    return t;
+  std::vector<std::string> lines;
+  {
+    std::stringstream ss(t);
+    std::string l;
+    while (std::getline(ss, l)) {
+      if (!l.empty() && l.back() == '\r') l.pop_back();
+      lines.push_back(l);
+    }
+  }
+  MergeCtx ctx;
+  return expandMergeJson(lines, 0, lines.size(), ctx, baseDir, warnings);
+}
+
 Project parseProject(const std::string& text, const std::string& baseDir,
                      const std::string& defaultOutFile,
                      std::vector<std::string>& warnings) {
@@ -554,6 +880,7 @@ bool processSource(const std::string& cliArg, std::vector<MailSpec>& mails,
 
   PDFGEN_LOGD("processSource: %s", mainFile.c_str());
   std::string text = readFile(mainFile);
+  text = expandMailMerge(text, baseDir, warnings);   // \mloop/\jloop/\jload
   if (text.empty()) {
     warnings.push_back("cannot read " + mainFile);
     return false;

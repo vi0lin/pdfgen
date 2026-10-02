@@ -1,0 +1,14 @@
+[
+  {"name": "Anna Muster", "email": "anna@example.com", "ort": "Berlin",
+   "rabatt": 10,
+   "posten": [
+     {"text": "Beratung",  "preis": 120},
+     {"text": "Umsetzung", "preis": 480}
+   ]},
+  {"name": "Bernd Beispiel", "email": "bernd@example.org", "ort": "Duisburg",
+   "posten": [
+     {"text": "Wartung", "preis": 90}
+   ]},
+  {"name": "Clara Test", "email": "clara@example.net", "ort": "Essen",
+   "status": "gesperrt", "posten": []}
+]

@@ -204,6 +204,7 @@ bracket form.
 | `\c embedded` … `\\c` | conditional block: the lines in between render only when the condition holds (`embedded` / `!embedded`, nestable). `condition=` stays available on every tag. |
 | `\off` / `\on` | parsing off/on — see *verbatim mode* below |
 | `\loop` / `\file` | repeat over data files — see below |
+| `\mloop` / `\jloop` / `\jload` | mail merge over text/JSON lists — see *Mail merge* below |
 | `\[` `\]` | literal square brackets, never interpreted anywhere |
 
 **Styles / mementos / forward** (works for the parameters of EVERY element —
@@ -317,6 +318,117 @@ the auth mechanism is an extensible enum (`smtp_auth`); credentials stay the
 same two strings everywhere, so adding a mechanism never changes any input
 path, and the old `send_mail()` entry point still works (it forwards to the
 transport-parameterized `send_mail_ex()`).
+
+## Mail merge: one source, many PDFs and mails
+
+A merge loop runs at PROJECT level (before documents and mails are split),
+so its body may contain `\pdfgen`/`\mail`/`\attach` -- one PDF and one mail
+per record. A runnable example ships in `examples/mailmerge/`
+(`pdfgen examples/mailmerge --mail-list` renders everything and lists the
+mails without sending; add real accounts and use `--mail` to send).
+
+**Plain text records** -- `\mloop datei.txt, D=\n\n` … `\\mloop` uses the
+SAME engine and `:N` range placeholders as `\loop` (records split by the
+delimiter, lines are the fields):
+
+```
+\mloop kunden.txt, D=\n\n
+\pdfgen, file=Brief-:0.pdf
+# Anschreiben
+Hallo :1 aus :2!
+\mail M:0, to=:3, attachment=Brief-:0.pdf
+Ihr Schreiben
+Hallo :1, anbei Ihr PDF.
+\\mloop
+```
+
+**JSON records** -- `\jloop datei.json` … `\\jloop` iterates a top-level
+array. Placeholders: `$key`, nested paths `$kunde.ort`, `$posten[0].preis`,
+`${name}` when letters follow directly, `$_` = the whole current record
+(that is how an EMAIL-ONLY list `["a@x.de","b@y.de"]` works), `$#` = the
+1-based position (ideal for unique file and mail names -- prefer `$#` over
+`$name` in file names: `attachment=` splits on spaces for multi-attach).
+Unknown `$names` stay literal, so `\loop`'s own `$var` mementos and ordinary
+dollar signs survive.
+
+```
+\jloop kunden.json, filter=$status!=gesperrt
+\pdfgen, file=Angebot-$#.pdf
+# Angebot für $name
+\t grid=on, widths=3:1
+| Posten | Preis |
+| :--- | ---: |
+\jloop $posten
+| $_.text | $_.preis € |
+\\jloop
+\\t
+\c $rabatt
+Als Stammkunde erhalten Sie $rabatt % Rabatt!
+\\c
+\mail Kunde$#, to=$email, attachment=Angebot-$#.pdf
+Ihr Angebot, $name
+Hallo $name, anbei Ihr persönliches Angebot.
+\\jloop
+```
+
+**Conditions on data** -- `\c $pfad` … `\\c` renders only when the entry
+exists and is non-empty (not null/false/0/""/[]); `\c !$pfad` when it is
+missing; `\c $pfad=wert` / `\c $pfad!=wert` compare (the right side may hold
+placeholders itself). `filter=` on `\jloop` takes the same expressions and
+skips non-matching records. Conditions WITHOUT `$` pass through untouched to
+the normal stage (`embedded` etc. keep working).
+
+**Nested lists** -- `\jloop $pfad` … `\\jloop` iterates an array INSIDE the
+current record (the invoice items above); `$_` is the element, `$_.feld` its
+fields.
+
+**Cross-file lookup** -- `\jload andere.json, match=KEY=WERT, as=name` finds
+the first record whose KEY equals WERT (placeholders allowed) and exposes it
+as `$name.feld`; not found = empty record, so `\c $name` / `\c !$name`
+branch on it. The frame ends with the surrounding loop body (or `\\jload`).
+The email-only list from above becomes a full campaign:
+
+```
+\jloop emails.json
+\jload kunden.json, match=email=$_, as=kd
+\c $kd
+\pdfgen, file=Info-$#.pdf
+# Info für $kd.name
+\mail Info$#, to=$_
+Kurzinfo für $kd.name
+Hallo $kd.name!
+\\c
+\c !$kd
+\mail Neu$#, to=$_
+Willkommen!
+Zu $_ liegt noch kein Kundendatensatz vor.
+\\c
+\\jloop
+```
+
+**Filling the lists from C/C++** -- the data format IS the interface: hand
+pdfgen a JSON file (or write one from your UI) and call `processSource` as
+usual. `jsondata.h` ships a tiny builder so hosts never hand-format JSON:
+
+```cpp
+#include "jsondata.h"
+using jsondata::Value;
+
+Value list = Value::array();
+Value k = Value::object();
+k.set("name", "Anna Muster").set("email", "anna@example.com");
+Value posten = Value::array();
+posten.push(Value::object().set("text", "Beratung").set("preis", 120));
+k.set("posten", posten);
+list.push(k);
+pdfgen::writeFile(dir + "/kunden.json", list.toJson());   // then processSource
+```
+
+Plain-C hosts simply `snprintf` the JSON text. Parsing errors come back as
+warnings with a line number; `--mail-list` is the dry run for the whole
+campaign, `--mail-test` sends everything to the `[test]` addresses first.
+Merge substitution is a PREPROCESSOR: it also fills placeholders inside
+later `\off` blocks and data read by `\loop` stays verbatim.
 
 ## Page breaks, comments, row spacing
 

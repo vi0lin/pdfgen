@@ -135,7 +135,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_MARKUP_API 17
+#define PDFGEN_MARKUP_API 18
 #include <functional>
 #include <string>
 #include <vector>
@@ -196,6 +196,14 @@ std::string preprocessSource(const std::string& text, bool embedded,
 // mdLineSemantics = true for .md sources (soft line wrapping).
 std::string translateMarkdown(const std::string& text, bool mdLineSemantics,
                               std::vector<std::string>& warnings);
+
+// Project-stage mail-merge loop: \mloop datei.txt(, D=...) ... \\mloop --
+// the SAME engine and placeholder grammar as \loop, but expanded by
+// project::processSource BEFORE documents/mails are split, so the body may
+// contain \pdfgen/\mail/\attach tags (one PDF + one mail per record).
+std::string expandMergeTextLoops(const std::string& text,
+                                 const std::string& baseDir,
+                                 std::vector<std::string>& warnings);
 
 // Stage 0a: expands \loop blocks (body repeated per record of a data file,
 // : placeholders replaced). Runs after embeds, before file includes.

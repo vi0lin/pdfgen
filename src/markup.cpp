@@ -22,7 +22,7 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: it lacks PDFGEN_MARKUP_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_MARKUP_API != 17
+#elif PDFGEN_MARKUP_API != 18
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
@@ -1293,8 +1293,10 @@ std::vector<long> buildSegEnds(const std::string& norm,
 
 } // namespace
 
-std::string expandLoops(const std::string& text, const std::string& baseDir,
-                        std::vector<std::string>& warnings) {
+static std::string expandLoopsImpl(const std::string& text,
+                                   const std::string& baseDir,
+                                   std::vector<std::string>& warnings,
+                                   bool mergeStage) {
   std::vector<std::string> lines;
   {
     std::stringstream ss(text);
@@ -1310,16 +1312,27 @@ std::string expandLoops(const std::string& text, const std::string& baseDir,
   for (size_t li = 0; li < lines.size(); ++li) {
     std::string t = trim(lines[li]);
     std::string low = toLower(t);
-    bool isLoop = low.rfind("\\loop", 0) == 0 &&
-                  (t.size() == 5 || t[5] == ' ' || t[5] == '\t' || t[5] == ',');
-    bool isFile = low.rfind("\\file", 0) == 0 &&
-                  (t.size() == 5 || t[5] == ' ' || t[5] == '\t' || t[5] == ',');
-    if (!isLoop && !isFile) { emit(lines[li]); continue; }
-    const char* tagName = isFile ? "file" : "loop";
-    const std::string closeTag = isFile ? "\\\\file" : "\\\\loop";
+    auto tagAt = [&](const char* w) {
+      size_t n = std::strlen(w);
+      return low.rfind(w, 0) == 0 &&
+             (t.size() == n || t[n] == ' ' || t[n] == '\t' || t[n] == ',');
+    };
+    bool isLoop, isFile, isMerge = false;
+    if (mergeStage) {
+      isMerge = tagAt("\\mloop");
+      isLoop = isFile = false;
+      if (!isMerge) { emit(lines[li]); continue; }
+    } else {
+      isLoop = tagAt("\\loop");
+      isFile = tagAt("\\file");
+      if (!isLoop && !isFile) { emit(lines[li]); continue; }
+    }
+    const char* tagName = isMerge ? "mloop" : isFile ? "file" : "loop";
+    const std::string closeTag = isMerge ? "\\\\mloop"
+                               : isFile  ? "\\\\file" : "\\\\loop";
 
     // parse "\loop file[, D=...]"  /  "\file file[, D=...]"
-    std::string rest = trim(t.substr(5));
+    std::string rest = trim(t.substr(std::strlen(tagName) + 1));
     if (!rest.empty() && rest[0] == ',') rest = trim(rest.substr(1));
     std::string file, delim = "\n\n";
     {
@@ -1434,6 +1447,18 @@ std::string expandLoops(const std::string& text, const std::string& baseDir,
   }
   if (!text.empty() && text.back() != '\n' && !out.empty()) out.pop_back();
   return out;
+}
+
+
+std::string expandLoops(const std::string& text, const std::string& baseDir,
+                        std::vector<std::string>& warnings) {
+  return expandLoopsImpl(text, baseDir, warnings, /*mergeStage=*/false);
+}
+
+std::string expandMergeTextLoops(const std::string& text,
+                                 const std::string& baseDir,
+                                 std::vector<std::string>& warnings) {
+  return expandLoopsImpl(text, baseDir, warnings, /*mergeStage=*/true);
 }
 
 // ---- stage 0: file includes ------------------------------------------------------
@@ -1580,10 +1605,7 @@ bool fileCreationTime(const std::string& path, std::time_t& out) {
   out = (std::time_t)((u.QuadPart - 116444736000000000ULL) / 10000000ULL);
   return true;
 #else
-// statx() als Funktion gibt es mit glibc >= 2.28 und Bionic ab API 30;
-// aeltere Android-Zielstufen (hier 26) kennen nur den Kernel-Struct ohne
-// die Funktion -- dort reicht stat() mit der Aenderungszeit.
-#if defined(__linux__) && (defined(__GLIBC__) || (defined(__ANDROID_API__) && __ANDROID_API__ >= 30))
+#ifdef __linux__
   struct statx stx;
   if (statx(AT_FDCWD, path.c_str(), 0, STATX_BTIME | STATX_MTIME, &stx) == 0) {
     if (stx.stx_mask & STATX_BTIME) { out = stx.stx_btime.tv_sec; return true; }

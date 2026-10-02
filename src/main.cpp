@@ -51,7 +51,7 @@
 // ---- release consistency check ----
 #ifndef PDFGEN_PROJECT_API
 #error "stale project.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_PROJECT_API != 4
+#elif PDFGEN_PROJECT_API != 5
 #error "version mismatch in project.h: replace ALL pdfgen source files from the same release."
 #endif
 
@@ -99,6 +99,8 @@ void usage(const char* argv0) {
       "                       from the domain (gmail, outlook, gmx, web.de,\n"
       "                       t-online, yahoo, icloud) or given explicitly\n"
       "  --mail-accounts      list the resolved sender accounts and exit\n"
+      "  --mail-list          render, then list the defined mails (recipients,\n"
+      "                       subject, attachments) WITHOUT sending\n"
       "  --default-sender ADDR\n"
       "  --test-to ADDR       add a test recipient (repeatable)\n"
       "  -v, --verbose        also print debug messages\n";
@@ -107,6 +109,7 @@ void usage(const char* argv0) {
 } // namespace
 
 static bool listAccounts = false;
+static bool listMails = false;
 
 int main(int argc, char** argv) {
   std::vector<std::string> sources, mailNames;
@@ -163,6 +166,10 @@ int main(int argc, char** argv) {
         return 2;
       }
       cli.accounts.push_back(acc);
+      continue;
+    }
+    if (a == "--mail-list") {                    // show parsed mails, no send
+      listMails = true;
       continue;
     }
     if (a == "--mail-accounts") {                  // show resolved accounts
@@ -234,6 +241,22 @@ int main(int argc, char** argv) {
   for (const auto& s : sources)
     ok = project::processSource(s, mails, warnings) && ok;
   for (const auto& w : warnings) PDFGEN_LOGW("%s", w.c_str());
+
+  if (listMails) {                                  // Serienbrief-Kontrolle
+    printf("Definierte Mails (%zu):\n", mails.size());
+    for (const auto& m : mails) {
+      std::string to;
+      for (const auto& a : m.to) to += (to.empty() ? "" : " ") + a;
+      printf("  %-18s an: %-34s Betreff: %s\n", m.name.c_str(), to.c_str(),
+             m.subject.c_str());
+      for (const auto& att : m.attachments)
+        printf("  %-18s     Anhang: %s\n", "", att.c_str());
+      if (!m.from.empty())
+        printf("  %-18s     von: %s\n", "", m.from.c_str());
+    }
+    if (mails.empty()) printf("  (keine)\n");
+    return ok ? 0 : 1;
+  }
 
   // ---- Versand ----
   if (mailMode) {
