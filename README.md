@@ -201,6 +201,8 @@ bracket form.
 | `\p Site3.pdf, newpage_no_blank` | `[pdf=Site3.pdf, ...]` |
 | `\pdfgen Quelle.txt, file=X.pdf` | `[pdfgen=Quelle.txt, file=X.pdf]` |
 | `\mail Name, to=…` / `\attach mail=…, file=…` | `[mail=Name, …]` / `[attach, …]` |
+| `\doc Name, format=pdf,html` | `[doc=Name, format=pdf,html]` -- same block as PDF and/or HTML |
+| `\html Name` | `[html=Name]` = `[doc=Name, format=html]` |
 | `\c embedded` … `\\c` | conditional block: the lines in between render only when the condition holds (`embedded` / `!embedded`, nestable). `condition=` stays available on every tag. |
 | `\off` / `\on` | parsing off/on — see *verbatim mode* below |
 | `\loop` / `\file` | repeat over data files — see below |
@@ -318,6 +320,44 @@ the auth mechanism is an extensible enum (`smtp_auth`); credentials stay the
 same two strings everywhere, so adding a mechanism never changes any input
 path, and the old `send_mail()` entry point still works (it forwards to the
 transport-parameterized `send_mail_ex()`).
+
+## HTML output
+
+The same token stream that feeds the PDF layout can be written as HTML
+(`src/htmlwriter.cpp`): headings, paragraphs with `<b><i><u>`, tables with
+spans, alignment, grid/frame and column widths, images (float, align,
+width), lists, quotes, code blocks, rules, page breaks. Loops, conditions,
+includes, groups, mloop/jloop -- everything from stage 1 -- works unchanged,
+because it is resolved before the format is chosen.
+
+```
+\doc  Angebot, format=html        Angebot.html
+\doc  Angebot, format=pdf,html    Angebot.pdf AND Angebot.html from one block
+\html Angebot                     short for format=html
+\pdfgen Quelle.txt, file=X.pdf    unchanged (format=pdf)
+```
+
+`\doc Name` with a bare name renders the inline content that follows; a
+name ending in `.txt`/`.md` is a source file like with `\pdfgen`. `file=`
+sets the output base name; the extension comes from the format. In loops
+`format={{format}}` can come from the data.
+
+Mails: `\mail Name, to=…, format=html` sends the body as
+`multipart/alternative` (HTML + a text version made from the same tokens);
+images are embedded as `cid:` parts. Without `format=` (or `format=text`)
+the mail is plain text exactly as before. `body=Name` takes the content of
+document `Name` as the mail body; if that document is also rendered as PDF,
+the PDF is attached automatically:
+
+```
+\doc Angebot, format=pdf,html
+...
+\mail Angebot, to=kunde@example.org, format=html, body=Angebot
+Ihr Angebot
+```
+
+In HTML, `[pdf=...]` becomes a link and `[pdfgen=..., include]` is skipped
+(both with a warning); margins have no meaning there.
 
 ## Mail merge: one source, many PDFs and mails
 

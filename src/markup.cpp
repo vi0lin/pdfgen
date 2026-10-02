@@ -333,6 +333,7 @@ std::string translateBackslashTags(const std::string& text,
       {"e", "embed", true, false},  {"embed", "embed", true, false},
       {"p", "pdf", true, false},    {"pdf", "pdf", true, false},
       {"pdfgen", "pdfgen", true, false},
+      {"doc", "doc", true, false},  {"html", "html", true, false},
       {"mail", "mail", true, false},
       {"attach", "attach", false, false},
     };

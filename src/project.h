@@ -76,6 +76,7 @@
 
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace project {
 
@@ -88,10 +89,12 @@ struct PageLayout {
 };
 
 struct DocSpec {
-  std::string outFile;          // relative to baseDir
+  std::string outFile;          // relative to baseDir -- Basisname; je Format kommt .pdf/.html
   std::string sourceFile;       // "" = inline content
   std::string inlineText;
   PageLayout layout;            // from [pdfgen ...] tag options
+  std::vector<std::string> formats{"pdf"};   // "pdf", "html" -- [doc, format=pdf,html]
+  std::string name;             // [doc=Name] / [html=Name]: Name fuer body= in Mails
 };
 
 struct MailSpec {
@@ -101,6 +104,10 @@ struct MailSpec {
   std::string from;             // sender account ("" = default account)
   std::string subject, body;
   std::string baseDir;          // attachments resolve relative to this
+  bool html = false;            // format=html: body durch die pdfgen-Pipeline nach HTML
+  std::string bodyDoc;          // body=Name: Inhalt des Dokuments Name als Koerper
+  std::string bodyHtml;         // gerendert (processSource), "" = reine Textmail
+  std::vector<std::pair<std::string, std::string>> inlineImages;   // cid -> Datei (HTML-Mail)
 };
 
 struct Project {
@@ -122,6 +129,10 @@ bool renderDocument(const std::string& baseDir, const std::string& sourceText,
                     const std::string& outPdfPath, std::string* outBytes,
                     std::vector<std::string>& warnings, int depth = 0,
                     PageLayout layout = {}, bool embedded = false);
+// Renders one document source text into an HTML file (same tokens as the
+// PDF path, see htmlwriter.h). Returns false on failure.
+bool renderHtmlDocument(const std::string& baseDir, const std::string& sourceText,
+                        const std::string& outHtmlPath, std::vector<std::string>& warnings);
 
 // Convenience: process one CLI source (directory or .txt file): parse,
 // render every document, and append the mails to `mails`.

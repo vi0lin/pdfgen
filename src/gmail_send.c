@@ -64,6 +64,24 @@ int send_mail_ex(const smtp_transport *tr,
                  const char *body_text,
                  const char **files, int n_files)
 {
+    return send_mail_html(tr, from, password, to, n_to, cc, n_cc, subject,
+                          body_text, NULL, NULL, NULL, 0, files, n_files);
+}
+
+/* HTML-Variante: body_html != NULL -> multipart/alternative (Text + HTML);
+ * mit inline-Bildern (cid) darum ein multipart/related; Anhaenge wie gehabt
+ * im aeusseren multipart/mixed. body_html == NULL -> reine Textmail. */
+int send_mail_html(const smtp_transport *tr,
+                   const char *from,
+                   const char *password,
+                   const char **to,   int n_to,
+                   const char **cc,   int n_cc,
+                   const char *subject,
+                   const char *body_text,
+                   const char *body_html,
+                   const char **inline_cids, const char **inline_files, int n_inline,
+                   const char **files, int n_files)
+{
     int i;
     char url[512];
     smtp_transport gmail = { "smtp.gmail.com", 465, 1, SMTP_AUTH_PASSWORD };
@@ -153,12 +171,53 @@ int send_mail_ex(const smtp_transport *tr,
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
 
-    /* --- MIME body: text part + attachments --- */
+    /* --- MIME body: text part (oder alternative/related bei HTML) + attachments --- */
     mime = curl_mime_init(curl);
-
-    curl_mimepart *part = curl_mime_addpart(mime);
-    curl_mime_data(part, body_text, CURL_ZERO_TERMINATED);
-    curl_mime_type(part, "text/plain; charset=utf-8");
+    curl_mimepart *part;
+    if (!body_html) {
+        part = curl_mime_addpart(mime);
+        curl_mime_data(part, body_text, CURL_ZERO_TERMINATED);
+        curl_mime_type(part, "text/plain; charset=utf-8");
+    } else {
+        /* alternative: erst Text, dann HTML (das letzte ist das bevorzugte) */
+        curl_mime *alt = curl_mime_init(curl);
+        part = curl_mime_addpart(alt);
+        curl_mime_data(part, body_text ? body_text : "", CURL_ZERO_TERMINATED);
+        curl_mime_type(part, "text/plain; charset=utf-8");
+        part = curl_mime_addpart(alt);
+        curl_mime_data(part, body_html, CURL_ZERO_TERMINATED);
+        curl_mime_type(part, "text/html; charset=utf-8");
+        if (n_inline > 0) {
+            /* related: alternative + die Bilder mit Content-ID */
+            curl_mime *rel = curl_mime_init(curl);
+            part = curl_mime_addpart(rel);
+            curl_mime_subparts(part, alt);
+            curl_mime_type(part, "multipart/alternative");
+            for (i = 0; i < n_inline; i++) {
+                if (!inline_files[i] || !inline_cids[i]) continue;
+                part = curl_mime_addpart(rel);
+                if (curl_mime_filedata(part, inline_files[i]) != CURLE_OK) {
+                    PDFGEN_LOGW("cannot embed %s", inline_files[i]);
+                    continue;
+                }
+                curl_mime_encoder(part, "base64");
+                {
+                    char cid[512]; struct curl_slist *ph = NULL;
+                    snprintf(cid, sizeof cid, "Content-ID: <%s>", inline_cids[i]);
+                    ph = curl_slist_append(ph, cid);
+                    ph = curl_slist_append(ph, "Content-Disposition: inline");
+                    curl_mime_headers(part, ph, 1);   /* 1 = libcurl uebernimmt die Liste */
+                }
+            }
+            part = curl_mime_addpart(mime);
+            curl_mime_subparts(part, rel);
+            curl_mime_type(part, "multipart/related");
+        } else {
+            part = curl_mime_addpart(mime);
+            curl_mime_subparts(part, alt);
+            curl_mime_type(part, "multipart/alternative");
+        }
+    }
 
     for (i = 0; i < n_files; i++) {
         if (!files[i]) continue;

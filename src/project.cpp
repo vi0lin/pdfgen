@@ -1,4 +1,6 @@
 #include "project.h"
+#include "htmlwriter.h"
+#include <cstring>
 #include "jsondata.h"
 
 #include <cctype>
@@ -73,7 +75,8 @@ bool parseTag(const std::string& tagText, Tag& out) {
   size_t eq = head.find('=');
   out.kind = toLower(trim(eq == std::string::npos ? head : head.substr(0, eq)));
   out.headValue = eq == std::string::npos ? "" : trim(head.substr(eq + 1));
-  if (out.kind != "pdfgen" && out.kind != "mail" && out.kind != "attach") return false;
+  if (out.kind != "pdfgen" && out.kind != "mail" && out.kind != "attach" &&
+      out.kind != "doc" && out.kind != "html") return false;
   out.opts.clear();
   for (size_t i = 1; i < parts.size(); ++i) {
     size_t e = parts[i].find('=');
@@ -641,7 +644,8 @@ Project parseProject(const std::string& text, const std::string& baseDir,
     std::string low = toLower(t);
     bool tagStart = !t.empty() && t[0] == '[' &&
         (low.rfind("[pdfgen", 0) == 0 || low.rfind("[mail", 0) == 0 ||
-         low.rfind("[attach", 0) == 0);
+         low.rfind("[attach", 0) == 0 || low.rfind("[doc", 0) == 0 ||
+         low.rfind("[html", 0) == 0);
     if (tagStart) {
       std::string tagText = t;
       while (tagText.find(']') == std::string::npos && std::getline(ss, line)) {
@@ -653,7 +657,7 @@ Project parseProject(const std::string& text, const std::string& baseDir,
         pendingLead.clear();                     // blanks before a tag: void
         skipSection = false;
         if (!controlConditionPasses(tag, warnings)) {
-          if (tag.kind == "pdfgen" || tag.kind == "mail") {
+          if (tag.kind == "pdfgen" || tag.kind == "mail" || tag.kind == "doc" || tag.kind == "html") {
             skipSection = true;               // drop the whole section
             curDoc = nullptr;
             curMail = nullptr;
@@ -667,23 +671,35 @@ Project parseProject(const std::string& text, const std::string& baseDir,
           curDoc->inlineText += tagText + "\n";
           continue;
         }
-        if (tag.kind == "pdfgen") {
+        if (tag.kind == "pdfgen" || tag.kind == "doc" || tag.kind == "html") {
+          // [pdfgen=Quelle.txt, file=X.pdf]   wie bisher (format=pdf)
+          // [doc=Name, format=pdf,html]       Name ohne Endung = Ausgabename,
+          //                                   mit .txt/.md = Quelldatei
+          // [html=Name]                       = [doc=Name, format=html]
           curMail = nullptr;
+          DocSpec spec;
+          std::string head = tag.headValue, lowHead = toLower(head);
+          const bool headIsSource = lowHead.size() > 3 && (lowHead.compare(lowHead.size() - 4, 4, ".txt") == 0 || lowHead.compare(lowHead.size() - 3, 3, ".md") == 0);
+          if (tag.kind == "pdfgen" || headIsSource) spec.sourceFile = head;
+          else spec.name = head;
           std::string file = opt(tag, "file") ? *opt(tag, "file") : "";
           if (file.empty()) {
-            if (!tag.headValue.empty()) {          // derive from source name
-              file = tag.headValue;
-              size_t dot = file.rfind('.');
-              if (dot != std::string::npos) file.erase(dot);
-              file += ".pdf";
-            } else {
-              warnings.push_back("[pdfgen] without file= — using " + defaultOutFile);
-              file = defaultOutFile;
-            }
+            if (!head.empty()) { file = head; size_t dot = file.rfind('.'); if (dot != std::string::npos && headIsSource) file.erase(dot); }
+            else { warnings.push_back("[" + tag.kind + "] without file= — using " + defaultOutFile); file = defaultOutFile; }
           }
-          DocSpec spec;
+          // Basisname ohne .pdf/.html -- die Endung kommt je Format
+          { std::string lf = toLower(file); for (const char* e : { ".pdf", ".html", ".htm" }) { size_t n = std::strlen(e); if (lf.size() > n && lf.compare(lf.size() - n, n, e) == 0) { file.erase(file.size() - n); break; } } }
           spec.outFile = file;
-          spec.sourceFile = tag.headValue;
+          if (spec.name.empty()) spec.name = file;
+          spec.formats.clear();
+          std::string fmt = tag.kind == "html" ? "html" : "pdf";
+          if (auto* v = opt(tag, "format")) fmt = toLower(*v);
+          // "format=pdf,html": der Tag-Parser trennt an Kommas, das "html"
+          // kommt als nackte Option an -- hier wieder einsammeln.
+          // (format=pdf+html und format=pdf html gehen ebenfalls.)
+          for (auto& kv : tag.opts) if (kv.second.empty() && (kv.first == "pdf" || kv.first == "html")) fmt += "," + kv.first;
+          { std::string cur; for (char c : fmt + ",") { if (c == ',' || c == ' ' || c == '+' || c == '/') { cur = trim(cur); if (cur == "pdf" || cur == "html") spec.formats.push_back(cur); else if (!cur.empty()) warnings.push_back("[" + tag.kind + "]: unknown format '" + cur + "' (pdf, html)"); cur.clear(); } else cur += c; } }
+          if (spec.formats.empty()) spec.formats.push_back("pdf");
           applyMarginOpts(tag.opts, "", spec.layout, warnings);
           prj.docs.push_back(std::move(spec));
           curDoc = &prj.docs.back();
@@ -699,6 +715,8 @@ Project parseProject(const std::string& text, const std::string& baseDir,
           if (auto* v = opt(tag, "attachment")) m.attachments = splitWs(*v);
           if (auto* v = opt(tag, "test"))       m.testAddr = *v;
           if (auto* v = opt(tag, "from"))       m.from = *v;   // Absenderkonto
+          if (auto* v = opt(tag, "format"))     { const std::string f = toLower(*v); m.html = f == "html"; if (f != "html" && f != "text" && !f.empty()) warnings.push_back("[mail] format=" + *v + ": use text or html"); }
+          if (auto* v = opt(tag, "body"))       m.bodyDoc = *v;  // Koerper = Dokument Name
           if (m.name.empty())
             warnings.push_back("[mail] without a name — use [mail=Name, ...]");
           prj.mails.push_back(std::move(m));
@@ -850,6 +868,19 @@ bool renderDocument(const std::string& baseDir, const std::string& sourceText,
 }
 
 // ---- CLI source processing --------------------------------------------------
+bool renderHtmlDocument(const std::string& baseDir, const std::string& sourceText,
+                        const std::string& outHtmlPath, std::vector<std::string>& warnings) {
+  markup::Options opt; opt.pdfPath = outHtmlPath;
+  std::vector<markup::Token> toks = markup::tokenize(sourceText, opt, warnings);
+  std::string title = outHtmlPath;
+  { size_t sl = title.find_last_of("/\\"); if (sl != std::string::npos) title = title.substr(sl + 1); size_t dot = title.rfind('.'); if (dot != std::string::npos) title.erase(dot); }
+  htmlout::Result r = htmlout::render(toks, baseDir, title, /*forMail=*/false, warnings);
+  std::ofstream f(outHtmlPath, std::ios::binary);
+  if (!f) { warnings.push_back("cannot write " + outHtmlPath); return false; }
+  f << r.html;
+  PDFGEN_LOGI("html: %s", outHtmlPath.c_str());
+  return true;
+}
 bool processSource(const std::string& cliArg, std::vector<MailSpec>& mails,
                    std::vector<std::string>& warnings) {
   std::string baseDir, mainFile, defaultOut;
@@ -902,8 +933,38 @@ bool processSource(const std::string& cliArg, std::vector<MailSpec>& mails,
       }
       src = markup::preprocessSource(src, /*embedded=*/false, warnings);
     }
-    std::string outPath = baseDir + "/" + d.outFile;
-    ok = renderDocument(baseDir, src, outPath, nullptr, warnings, 0, d.layout) && ok;
+    std::string basis = d.outFile;   // implizites Dokument traegt noch ".pdf" (defaultOutFile)
+    { std::string lf = toLower(basis); for (const char* e : { ".pdf", ".html", ".htm" }) { size_t n = std::strlen(e); if (lf.size() > n && lf.compare(lf.size() - n, n, e) == 0) { basis.erase(basis.size() - n); break; } } }
+    for (const std::string& fmt : d.formats) {
+      std::string outPath = baseDir + "/" + basis + "." + fmt;
+      if (fmt == "html") ok = renderHtmlDocument(baseDir, src, outPath, warnings) && ok;
+      else               ok = renderDocument(baseDir, src, outPath, nullptr, warnings, 0, d.layout) && ok;
+    }
+  }
+  // MAILS: body=Name nimmt den Inhalt des Dokuments; format=html rendert den
+  // Koerper durch dieselbe Pipeline (HTML + Textalternative + cid-Bilder).
+  for (auto& m : prj.mails) {
+    if (!m.bodyDoc.empty()) {
+      bool found = false;
+      for (const auto& d : prj.docs) {
+        if (d.name != m.bodyDoc && d.outFile != m.bodyDoc) continue;
+        found = true;
+        std::string src = d.inlineText;
+        if (!d.sourceFile.empty()) { src = readFile(baseDir + "/" + d.sourceFile); src = markup::preprocessSource(src, false, warnings); }
+        m.body = src;
+        { std::string b2 = d.outFile; std::string lf = toLower(b2); for (const char* e : { ".pdf", ".html", ".htm" }) { size_t n = std::strlen(e); if (lf.size() > n && lf.compare(lf.size() - n, n, e) == 0) { b2.erase(b2.size() - n); break; } }
+          for (const std::string& fmt : d.formats) if (fmt == "pdf") m.attachments.push_back(b2 + ".pdf"); }   // das PDF haengt mit
+        break;
+      }
+      if (!found) warnings.push_back("[mail=" + m.name + "] body=" + m.bodyDoc + ": no such document");
+    }
+    if (m.html) {
+      markup::Options mo;
+      std::vector<markup::Token> toks = markup::tokenize(m.body, mo, warnings);
+      htmlout::Result r = htmlout::render(toks, baseDir, m.subject, /*forMail=*/true, warnings);
+      m.bodyHtml = r.html; m.body = r.text;
+      for (auto& im : r.images) m.inlineImages.push_back({ im.cid, im.path });
+    }
   }
   for (auto& m : prj.mails) mails.push_back(std::move(m));
   return ok;

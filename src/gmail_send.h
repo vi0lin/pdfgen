@@ -53,6 +53,18 @@ int send_mail_ex(const smtp_transport *tr,
                  const char *body_text,
                  const char **files, int n_files);
 
+/* Like send_mail_ex, with an HTML body (body_html may be NULL = plain text)
+ * and inline images referenced as cid:<inline_cids[i]> from the HTML. */
+int send_mail_html(const smtp_transport *tr,
+                   const char *from,
+                   const char *password,
+                   const char **to,   int n_to,
+                   const char **cc,   int n_cc,
+                   const char *subject,
+                   const char *body_text,
+                   const char *body_html,
+                   const char **inline_cids, const char **inline_files, int n_inline,
+                   const char **files, int n_files);
 /* Sends one mail via Gmail (kept for compatibility; forwards to
  * send_mail_ex with the Gmail transport). */
 int send_mail(const char *from,
@@ -91,6 +103,7 @@ void pdfgen_mail_global_cleanup(void);
  */
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace pdfgen_mail {
 
@@ -121,6 +134,33 @@ inline int send(const Transport& tr,
                       pc.data(), (int)pc.size(),
                       subject.c_str(), body.c_str(),
                       pa.data(), (int)pa.size());
+}
+
+// HTML-Mail: bodyHtml leer = reine Textmail; inlineImages = (cid, Datei).
+inline int sendHtml(const Transport& tr,
+                    const std::string& from, const std::string& password,
+                    const std::vector<std::string>& to,
+                    const std::vector<std::string>& cc,
+                    const std::string& subject, const std::string& bodyText,
+                    const std::string& bodyHtml,
+                    const std::vector<std::pair<std::string, std::string>>& inlineImages,
+                    const std::vector<std::string>& attachments) {
+  auto ptrs = [](const std::vector<std::string>& v) {
+    std::vector<const char*> p; p.reserve(v.size());
+    for (const auto& s : v) p.push_back(s.c_str());
+    return p;
+  };
+  std::vector<std::string> cids, files;
+  for (const auto& im : inlineImages) { cids.push_back(im.first); files.push_back(im.second); }
+  std::vector<const char*> pt = ptrs(to), pc = ptrs(cc), pa = ptrs(attachments), pcid = ptrs(cids), pfi = ptrs(files);
+  smtp_transport c{tr.host.c_str(), tr.port, tr.ssl ? 1 : 0,
+                   tr.xoauth2 ? SMTP_AUTH_XOAUTH2 : SMTP_AUTH_PASSWORD};
+  return send_mail_html(&c, from.c_str(), password.c_str(),
+                        pt.data(), (int)pt.size(), pc.data(), (int)pc.size(),
+                        subject.c_str(), bodyText.c_str(),
+                        bodyHtml.empty() ? nullptr : bodyHtml.c_str(),
+                        pcid.data(), pfi.data(), (int)pcid.size(),
+                        pa.data(), (int)pa.size());
 }
 
 inline int send(const std::string& from, const std::string& password,
