@@ -1,4 +1,4 @@
-# pdfgen — C++ port of pdfgen.py
+# pdfgen — C++
 
 Generates `DIR/Bewerbung.pdf` from `DIR/{sender.txt, receiver.txt, text.txt}`,
 writing the PDF file format directly. No PDF library needed; dependencies are
