@@ -1,125 +1,169 @@
 # pdfgen — C++
 
-Generates `DIR/Bewerbung.pdf` from `DIR/{sender.txt, receiver.txt, text.txt}`,
-writing the PDF file format directly. No PDF library needed; dependencies are
-**zlib** (PNG decoding / Flate compression, preinstalled virtually everywhere)
-and **libwebp** for WebP images (`sudo apt install libwebp-dev`; build with
-`make NO_WEBP=1` to drop this dependency — WebP files then fail with a clear
-message instead).
+Turns plain `.txt` (pdfgen syntax + GitHub markdown) and `.md` files into
+PDFs, writing the PDF file format directly — no PDF library. Dependencies:
+**zlib** (preinstalled virtually everywhere), **libwebp** for WebP images,
+**libcurl** for mail. One source file can produce several PDFs, merge
+existing ones and e-mail the results.
 
-## Build & run
+---
 
-CMake (primary, cross-platform):
+## Quick start
 
-```
+### Build
+
+```sh
+# CMake (primary, cross-platform)
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-./build/pdfgen --path /path/to/bewerbung
-./build/pdfgen dir1 dir2 dir3    # multiple paths now actually work
+# plain Makefile (quick Linux builds; make NO_WEBP=1 drops libwebp)
+make
 ```
 
-Dependency resolution is tiered and automatic — for both zlib and libwebp it
-tries the system's CMake config package, then pkg-config (libwebp only), then
-falls back to building the library from source via FetchContent. Useful knobs:
+With [build.sh](https://github.com/vi0lin/build.sh) (multi-machine builds,
+this repo ships a ready `build.sh.conf`):
 
+```sh
+git clone https://github.com/vi0lin/build.sh && cd build.sh
+./build.sh --add-to-path          # one-time install
+cd /path/to/pdfgen
+build.sh deb@local                # configure + build here
+build.sh --run deb@local          # build and start
+build.sh exe@windows deb@local    # several targets/machines in parallel
 ```
--DPDFGEN_FORCE_FETCH=ON     # skip system libs, build zlib+libwebp from source
-                            # (recommended for mingw-w64 / Android NDK cross
-                            # builds whose sysroot ships neither)
--DPDFGEN_WITH_WEBP=OFF      # drop the libwebp dependency entirely; .webp
-                            # files then fail with a clear message
+
+Smoke test (builds if needed, renders the syntax reference and a few probes):
+
+```sh
+scripts/test_pdfgen.sh
 ```
 
-Why targets instead of a plain `-lwebp`: since libwebp 1.3 the static library
-needs `-lsharpyuv -lm` after it in exactly that order, which is the usual
-cause of "undefined reference to SharpYuv..." link failures. The imported /
-FetchContent CMake targets carry those transitive dependencies automatically
-on every platform.
+Dependency resolution is tiered and automatic — for zlib and libwebp CMake
+tries the system config package, then pkg-config, then builds from source
+via FetchContent. Knobs: `-DPDFGEN_FORCE_FETCH=ON` (skip system libs —
+recommended for mingw-w64 / Android NDK cross builds), `-DPDFGEN_WITH_WEBP=OFF`
+(drop libwebp; .webp files then fail with a clear message). Why targets
+instead of a plain `-lwebp`: since libwebp 1.3 the static library needs
+`-lsharpyuv -lm` after it in exactly that order — the imported/FetchContent
+targets carry those transitive dependencies on every platform.
 
-### Embedding into another CMake project
+### Use from the command line
 
-`pdfgen_core` is a proper library target (the CLI is a thin wrapper), so from
-a parent project it's just:
+```sh
+pdfgen brief.txt                 # -> brief.pdf (next to the source)
+pdfgen notes.md                  # markdown file -> notes.pdf
+pdfgen bewerbung/                # directory: reads text.txt (or text.md)
+pdfgen a.txt b/ c.md             # several sources in one run
+pdfgen . --mail                  # generate, then send the [mail=...] definitions
+pdfgen . --mail Haupt            # ... only the mail named "Haupt"
+pdfgen . --mail-test             # send to each mail's test address instead
+```
+
+| Flag | Meaning |
+|---|---|
+| `-c, --config FILE` | sender config (default: `pdfgen.conf` next to the binary) |
+| `--sender ADDR TOKEN [PROV\|HOST:PORT[:ssl]]` | add a sender account; the provider is inferred from the mail domain (gmail, outlook, gmx, web.de, t-online, yahoo, icloud) or given explicitly |
+| `--mail-accounts` | list the resolved sender accounts (host/port/TLS/auth) and exit |
+| `--default-sender ADDR` / `--test-to ADDR` | pick the default account / add test recipients |
+| `-v, --verbose` | debug messages |
+
+`pdfgen.exe` on Windows behaves identically (`pdfgen.exe brief.txt`, paths
+with `\` or `/`). Exit code 0 = all sources succeeded — script-friendly.
+
+### Use from bash
+
+```sh
+#!/usr/bin/env bash
+set -e
+for dir in kunden/*/; do             # one application folder per customer
+  pdfgen "$dir"                      # writes $dir/Bewerbung.pdf
+done
+pdfgen rundschreiben.md --mail       # render + send in one go
+```
+
+### Embed in C / C++
+
+`pdfgen_core` is a proper library target; the CLI is a thin wrapper.
 
 ```cmake
 add_subdirectory(external/pdfgen EXCLUDE_FROM_ALL)   # or FetchContent
-target_link_libraries(my_app PRIVATE pdfgen::core)
+target_link_libraries(my_app PRIVATE pdfgen::core)   # + pdfgen::mail if sending
 ```
-
-and in code: include `markup.h` / `flowables.h`, build a `pdf::Writer` +
-`pdf::Document`, add flowables, `save()` — see `src/main.cpp` for the
-complete 40-line recipe.
-
-### Sending the PDF by mail
-
-`src/gmail_send.c` sends mail through libcurl (`sudo apt install
-libcurl4-openssl-dev`; CMake links it via `find_package(CURL)` +
-`CURL::libcurl`). Being a C module used from C++, its functions are declared
-`extern "C"` in `gmail_send.h` — include that header from C++ code, never the
-`.c` file (including the `.c` compiles a second, name-mangled copy).
-
-Credentials are compile-time constants — no environment variables. Either
-edit `FROM_ADDR` / `APP_PASSWORD` at the top of `gmail_send.c`, or inject
-them at configure time:
-
-```
-cmake -B build -DPDFGEN_MAIL_FROM=me@gmail.com \
-               -DPDFGEN_MAIL_APP_PASSWORD=xxxxxxxxxxxxxxxx
-./build/pdfgen --mail /pfad/zur/bewerbung    # generates + mails the PDF
-```
-
-`send_test_mail(path)` takes the attachment path as a parameter (NULL = no
-attachment); edit its `to[]` / `cc[]` arrays for your recipients — the counts
-passed to `send_mail` must match the array sizes. From C++, the header also
-offers a `std::string`/`std::vector` wrapper:
 
 ```cpp
-pdfgen_mail::send("me@gmail.com", "apppassword",
-                  {"a@x.de", "b@y.de"}, {},          // to, cc
-                  "Bewerbung", "Anbei mein PDF.",
-                  {dir + "/Bewerbung.pdf"});
+#include "project.h"      // high level: source -> PDFs (+ mail definitions)
+#include "mail_config.h"  // runtime sender accounts (no compile-time creds)
+
+std::vector<project::MailSpec> mails;
+std::vector<std::string> warnings;
+project::processSource("bewerbung/", mails, warnings);   // same as the CLI
+
+pdfgen::MailConfig cfg;                                   // e.g. from your UI
+pdfgen::parseMailConfig(confText, cfg, warnings);
+pdfgen::setMailConfig(cfg);
 ```
 
-Gmail requires an *app password* (Google account → Security → 2-step
-verification → App passwords); regular passwords are rejected for SMTP.
+Host integration (logging, file access, paths) goes through `pdfgen_host.h` —
+the library never printf()s or opens files behind your back. For low-level
+use (own layout, no markup) include `flowables.h`/`pdfwriter.h`: build a
+`pdf::Writer` + `pdf::Document`, add flowables, `save()` — `src/main.cpp` is
+the complete recipe. `gmail_send.h` is a C module; include the header from
+C++ (it is `extern "C"`), never the `.c` file.
 
-A plain `Makefile` is also kept for quick Linux builds
-(`make`, optionally `make NO_WEBP=1`).
+**Learn the syntax by example:** `Syntax/Syntax.txt` is a complete,
+self-demonstrating reference — every tag explained AND shown live. Render it
+(`pdfgen Syntax.txt`) and read `Syntax.pdf` side by side with the source.
+
+---
+
+# Full reference
 
 ## Architecture — why the parser is no longer nested
 
 The Python version chained `parse_images → parse_headings → parse_datum`
 *inside each other*, so every tag type had to know about every other one
 (and `parse_datum` accidentally returned a variable from the wrong scope).
-The C++ version replaces that with a flat pipeline of layers that only ever
-call **downward**:
+The C++ version replaces that with a flat pipeline of stages that only ever
+call **downward** — a new tag is one new Token kind plus one case per stage,
+never a change to the other tags:
 
 ```
-main.cpp        CLI, reads the three txt files, assembles the document
+main.cpp          CLI; everything else lives in the library
    │
-markup.h/.cpp   STAGE 0  expandIncludes():  [datei.txt] → file contents
-                STAGE 1  tokenize():        text → flat vector<Token>
-                STAGE 2  buildFlowables():  tokens → layout objects
-   │                     (Text | Heading | Image | ParagraphEnd — no recursion;
-   │                      a new tag = one new Token kind + one case per stage)
+project.h/.cpp    sources -> documents: [pdfgen]/[mail]/[attach] sections,
+   │              header/footer blocks, base margins, [embed=...] with
+   │              conditions, two-pass rendering when [pages] is used
    │
-flowables.h/.cpp  layout engine (≈ platypus): Paragraph (word wrap,
-   │              justification, <b>/<i>/<u>/<br/>), Spacer, ImageFlow,
-   │              TwoColumnTable, Document (page breaking + paragraph
-   │              splitting across pages)
+markup.h/.cpp     the text pipeline, in order:
+   │                processOnOff            \off/\on verbatim regions
+   │                translateMarkdown       GitHub markdown -> internal form
+   │                translateBackslashTags  \i /\t /\e ... -> bracket tags
+   │                escapeLiteralBrackets   \[ \] -> sentinels
+   │                applyStyles             style= / name= / forward / clean
+   │                preprocess              // comments, \c blocks, condition=
+   │                expandLoops             \loop / \file with :ranges
+   │                expandIncludes          [datei.txt] / [datei.md]
+   │                expandDates             [date, ...]
+   │                tokenize                text -> flat vector<Token>
+   │                buildFlowables          tokens -> layout objects
    │
-metrics.h/.cpp    Helvetica advance widths (Adobe AFM) for measuring text
-image.h/.cpp      JPEG (embedded verbatim), PNG (full decode incl. palette
-   │              & alpha → /SMask), WebP (via libwebp: lossy VP8, lossless
-   │              VP8L, alpha → /SMask), BMP
+flowables.h/.cpp  layout engine (≈ platypus): Paragraph (wrap, justification,
+   │              <b>/<i>/<u>/<s>/<code>/<a=url>, hanging indents), Spacer,
+   │              ImageFlow (float, absolute, dpi budget, back layer),
+   │              TableFlow (spans, keep-groups, header repetition, splits),
+   │              StackFlow (keep-together), HRuleFlow, Document (lazy pages,
+   │              page breaking, paragraph splitting, header/footer decor)
    │
-pdfwriter.h/.cpp  raw PDF 1.4: objects, xref, pages, content streams, fonts
+metrics / ttffont Helvetica+Courier advance widths; DejaVu embedding (Type0/
+   │              CID + ToUnicode) for characters outside CP1252
+image.h/.cpp      JPEG (verbatim), PNG (palette, alpha -> /SMask), WebP, BMP;
+   │              box-filter downscaling for the dpi= budget
+pdfimport.h/.cpp  merging foreign PDFs (classic xref AND xref streams/ObjStm)
+pdfwriter.h/.cpp  raw PDF 1.4: objects, xref, pages, fonts, images, links
+mail_config/      runtime sender accounts (pdfgen.conf, --sender, host app),
+mail_dispatch     provider profiles, transport resolution -> gmail_send.c
+pdfgen_host       logging/file/path seam between library and host program
 ```
-
-A complete, self-demonstrating syntax reference ships in `Syntax/Syntax.txt`
-(with its demo assets): every tag is explained AND shown live — render it
-with `pdfgen Syntax.txt` and read the resulting `Syntax.pdf` side by side
-with the source. Literal square brackets in text are written `\[` `\]`.
 
 ## Backslash line-tag syntax
 
@@ -145,6 +189,9 @@ bracket form.
 | `\pdfgen Quelle.txt, file=X.pdf` | `[pdfgen=Quelle.txt, file=X.pdf]` |
 | `\mail Name, to=…` / `\attach mail=…, file=…` | `[mail=Name, …]` / `[attach, …]` |
 | `\c embedded` … `\\c` | conditional block: the lines in between render only when the condition holds (`embedded` / `!embedded`, nestable). `condition=` stays available on every tag. |
+| `\off` / `\on` | parsing off/on — see *verbatim mode* below |
+| `\loop` / `\file` | repeat over data files — see below |
+| `\[` `\]` | literal square brackets, never interpreted anywhere |
 
 **Styles / mementos / forward** (works for the parameters of EVERY element —
 tables incl. legacy `[table]`, images, `\r`, `\m`, `\e`, `\p`, project tags):
@@ -155,38 +202,41 @@ are overridden by the style, parameters after it override the style);
 cache so every FOLLOWING element of that type inherits them automatically
 (accumulative); `clean` ignores that cache and clears it. Merge order:
 forward cache → params before `style=` → style values → params after
-(later wins). A document-leading `[margins]`/`\m` line still sets the base
-page layout; a margins tag after any content now always acts as an in-flow
-change from that point (this also fixed a subtle bug where a mid-document
-margins tag was hoisted to the whole document). Styles live per source file;
-embedded/included files have their own scope.
+(later wins). A document-leading `[margins]`/`\m` line sets the base page
+layout; a margins tag after any content acts as an in-flow change from that
+point. Styles live per source file; embedded/included files have their own
+scope.
 
 **Loops over data files:** `\loop werte.txt, D=\n\n` … `\\loop` repeats the
 body once per record. Records are separated by the delimiter `D` (escapes
 `\n` `\t` `\\`; default `\n\n` = blank line — with `D=\n` every line is its
-own record). Within a record the LINES are the fields: `:0` inserts line 0,
-`:1:3` lines 1–3 (as real lines), `:4:` line 4 up to the record's end. A `:`
-only counts as a placeholder when preceded by start-of-line, whitespace or
-`|`, so `widths=2:1` stays untouched. Multi-line values drop naturally into
-block-table cells and full-width rows; `@` inside the body gives one
-keep-together group per record. Data files are read verbatim; out-of-range
-fields warn once per loop and insert nothing. JSON input (`\jloop`) is
-planned but deliberately postponed.
+own record). Within a record the LINES are the fields. Multi-line values
+drop naturally into block-table cells and full-width rows; `@` inside the
+body gives one keep-together group per record. Data files are read verbatim.
 
-**Mail providers:** sending always speaks SMTP (IMAP/POP3 are *retrieval*
-protocols and not needed for sending); what varies is the provider profile
-and the auth mechanism, and both are built in now. `pdfgen.conf` sections:
-`[gmail]`, `[outlook]`/`[office365]`, `[gmx]`, `[web.de]`, `[t-online]`,
-`[yahoo]`, `[icloud]` carry the right host/port/TLS variant (STARTTLS :587
-vs. implicit TLS :465); `[smtp HOST:PORT]` / `[smtp HOST:465 ssl]` covers
-any other server; the `xoauth2` flag makes the token line an OAuth2 bearer
-(XOAUTH2) for accounts without app passwords. The existing syntax keeps
-working unchanged: `--sender ADDR TOKEN` now infers the provider from the
-mail domain (an optional third value overrides it: a provider name or
-`HOST:PORT[:ssl]`), `[gmail]`-only configs behave exactly as before, and
-the old `send_mail()` C entry point still exists (it forwards to the new
-transport-parameterized `send_mail_ex`). `--mail-accounts` lists the
-resolved accounts (host, port, TLS, auth) without sending anything.
+**`\file` and the range syntax:** `\file datei.txt(, D=...)` … `\\file` is
+`\loop` without iteration — one pass, the fields are ALL lines of the file
+(global numbering). Both tags share one placeholder grammar
+`:START(:END)?` driven by a cursor that sits after the last delivered line:
+START = absolute number, `+N`/`-N` cursor-relative (backwards re-delivers
+earlier lines), `.` = line 0, `$var`, or empty = cursor. END = absolute
+number, `+N` = START+N inclusive (`:10:+4` → 10..14), `$var`, `$` = always
+the file/record end, or empty = to the end — or to the next delimiter when
+`D=` is set on the tag. `$name='<` / `$name='>` after a placeholder store its
+first/last delivered line number for reuse via `:$name`. Parse failures stay
+literal, so ordinary colons in prose are safe. Literal placeholder lines
+(under `\off`) do not move the cursor.
+
+**Parsing on/off (verbatim mode):** `\off` renders every following line as
+literal text (tags, tables, placeholders stay visible) until `\on` at the
+same level. As a line prefix the switch applies to exactly that line
+(`\on # Titel` renders one real heading inside an off block) — unless the
+rest opens a block: `\off \t …` makes the whole table literal until `\\t`.
+Inside `\t`/`\loop`/`\file` a standalone switch lasts until the element
+ends, then the previous state returns; `\on D=\n\n` lasts until the next
+blank line (any delimiter string works, matched against whole lines).
+`\on!`/`\off!` force the state through all open levels; later switches
+still work.
 
 **GitHub-flavored markdown:** works in .txt sources on top of the pdfgen
 syntax, and whole `.md` files render directly (`pdfgen README.md` →
@@ -205,280 +255,163 @@ tables; `\off` shows markdown literally. The one behavior change in .txt:
 a line of 3+ dashes/stars is now a rule, and `- ` at line start begins a
 list — escape with `\-`/`\*` or `\off` when literal text is wanted.
 
-**Parsing on/off (verbatim mode):** `\off` renders every following line as
-literal text (tags, tables, placeholders stay visible) until `\on` at the
-same level. As a line prefix the switch applies to exactly that line
-(`\on # Titel` renders one real heading inside an off block) — unless the
-rest opens a block: `\off \t …` makes the whole table literal until `\\t`.
-Inside `\t`/`\loop`/`\file` a standalone switch lasts until the element
-ends, then the previous state returns; `\on D=\n\n` lasts until the next
-blank line (any delimiter string works, matched against whole lines).
-`\on!`/`\off!` force the state through all open levels; later switches
-still work. Literal placeholder lines do not move the loop cursor.
-
-**`\file` and the range syntax:** `\file datei.txt(, D=...)` … `\\file` is
-`\loop` without iteration — one pass, the fields are ALL lines of the file
-(global numbering). Both tags share one placeholder grammar
-`:START(:END)?` driven by a cursor that sits after the last delivered line:
-START = absolute number, `+N`/`-N` cursor-relative (backwards re-delivers
-earlier lines), `.` = line 0, `$var`, or empty = cursor. END = absolute
-number, `+N` = START+N inclusive (`:10:+4` → 10..14), `$var`, `$` = always
-the file/record end, or empty = to the end — or to the next delimiter when
-`D=` is set on the tag. `$name='<` / `$name='>` after a placeholder store its
-first/last delivered line number for reuse via `:$name`. Parse failures stay
-literal, so ordinary colons in prose are safe.
-
 **Block tables (`\t` … `\\t`):** a `|`-row may span several physical lines —
 it ends at the first line that ENDS with `|`, and line breaks inside a cell
-become real breaks (`Test / Adresse / Telefonnummer` in one cell). Any text
-WITHOUT a leading `|` becomes a row with one cell spanning ALL columns (line
-breaks allowed); the next `|`-line starts the next ordinary row
-automatically. `@` between rows groups them (never split across pages),
-`[row...]`, separators and explicit `|||` colspans work as usual.
+become real breaks. Any text WITHOUT a leading `|` becomes a row with one
+cell spanning ALL columns (line breaks allowed); the next `|`-line starts
+the next ordinary row automatically. `@` between rows groups them (never
+split across pages), `[row...]`, separators and explicit `|||` colspans work
+as usual.
 
 ## Projects: several PDFs and mails from one source
 
-A source file may define multiple documents and e-mails. Control tags stand
-on their own line (a tag may wrap across lines until its closing bracket):
+`\pdfgen Quelle.txt, file=Name.pdf` ends the current document and starts the
+next one (without a source the following lines are its content; `margins=…`
+sets its base layout). `\mail Name, to=a@x b@y, cc=…, attachment=…, test=…`
+defines an e-mail: the first line after it is the subject, the rest up to
+the next tag the body; `\attach mail=Name, file=X.pdf` adds attachments.
+Without any project tags: a directory becomes `Bewerbung.pdf`, `pdfgen
+Beispiel.txt` becomes `Beispiel.pdf`.
 
-```
-[pdfgen, file=Bewerbung.pdf]        <- starts document 1, content follows
-...content...
-[pdfgen=Lebenslauf.txt, file=Lebenslauf.pdf]   <- document 2 from another file
-[mail=Haupt, to=a@x.de b@y.de, cc=c@z.de,
-attachment=Bewerbung.pdf, test=ich@x.de]
-Betreffzeile                        <- first line after the tag = Subject
-Mailtext ...                        <- rest until the next tag = body
-[attach, mail=Haupt, file=Lebenslauf.pdf]
+**Mail accounts are runtime configuration** (no compiled-in credentials):
+`pdfgen.conf` next to the binary, a file given with `-c`, `--sender` on the
+command line, or `setMailConfig()` from a host application. Sending always
+speaks SMTP (IMAP/POP3 are *retrieval* protocols); what varies is the
+provider profile and the auth mechanism, both built in:
+
+```ini
+[gmail default]              ; provider + optional "default"
+ich@gmail.com                ; line 1: address
+abcd efgh ijkl mnop          ; line 2: app password / token (spaces ignored)
+[gmx]                        ; also: outlook/office365, web.de, t-online,
+privat@gmx.de                ;   yahoo, icloud — host/port/TLS are built in
+gmx-app-passwort
+[smtp mail.firma.de:587]     ; any other server (587=STARTTLS; "... 465 ssl")
+ich@firma.de
+passwort
+[gmail xoauth2]              ; flag xoauth2: the token line is an OAuth2
+oauth@gmail.com              ;   bearer (XOAUTH2) instead of a password
+ya29....
+[test]                       ; default recipients for --mail-test
+test@example.com
 ```
 
-Address lists are space-separated. Without any control tags the whole file is
-one document: directories keep producing `DIR/Bewerbung.pdf`, and
-`pdfgen Example.txt` produces `Example.pdf` next to the source.
-
-```
-pdfgen DIR                          # reads DIR/text.txt
-pdfgen a.txt b.txt                  # several sources
-pdfgen ... --mail                   # send ALL defined mails
-pdfgen ... --mail Haupt Zweite      # send only these
-pdfgen ... --mail --mail-test       # send to each mail's test= address
-                                    # (subject prefixed "[TEST] ")
-```
+A mail picks its account with `from=adresse` (default account otherwise).
+`--sender ADDR TOKEN` infers the provider from the mail domain; an optional
+third value overrides it (a provider name or `HOST:PORT[:ssl]`).
+`--mail-accounts` lists the resolved accounts without sending. In the C API
+the auth mechanism is an extensible enum (`smtp_auth`); credentials stay the
+same two strings everywhere, so adding a mechanism never changes any input
+path, and the old `send_mail()` entry point still works (it forwards to the
+transport-parameterized `send_mail_ex()`).
 
 ## Page breaks, comments, row spacing
 
-`[newpage]` (or `[neueseite]`) starts a new page; two in a row produce a
-deliberate blank page. `[newpage, no_blank]` skips the break when the current
-page is still empty, so it never creates a fully blank page. Lines beginning with `//`
-(after optional indentation) are comments and disappear entirely — mid-line
-`//` (e.g. in URLs) is left alone. Table row spacing:
-`[table, rowspacing=2*mm, ...]` sets the default gap between all rows, and a
-`[row, spacing=8*mm]` line between two rows overrides the gap at exactly that
-position (e.g. extra air above a sum row). Grid lines close both rows around
-a gap; page splitting accounts for the gaps.
-
-**Controlling table page breaks:** `[row, pagebreak]` between two rows forces
-the table onto a new page exactly there (header repeats), even when the rest
-would still have fit — combinable with `spacing=`. `[group] ... [/group]`
-around several rows keeps them together: if the natural break would fall
-inside, the whole group moves to the next page ([gruppe] works too).
+`[newpage]` / `\n` forces a page break; `no_blank` breaks only when the
+current page is not empty (never creates a blank page); two in a row create
+a deliberate blank page. Lines starting with `//` are comments. Blank lines
+accumulate: every additional one adds a gap unit — including at the top of
+the file (space above the first heading). `[row, spacing=6*mm]` between two
+table rows changes exactly that gap; `[row, pagebreak]` forces the table to
+break there (header rows repeat).
 
 ## Header and footer on every page
 
-```
-[header]
-[table, widths=1:1]
-| <b>[document]</b> | [pages] |
-| :--- | ---: |
-[/header]
-[bottom]
-...any markup...
-[/bottom]
-```
-
-Both blocks render on every page of the document (not on merged foreign
-pages), may contain any markup with flexible height, and shrink the content
-area: the header starts at the top margin, the footer ends at the bottom
-margin, so the visual page margins stay intact. Without the blocks nothing
-changes. `[document]` is the output file name, `[pages]` becomes
-`current/total` — the total is computed with an automatic two-pass render.
+`\h` … `\\h` and `\b` … `\\b` (or `[header]`/`[bottom]` blocks) hold markup
+drawn on every own page — tables, images, styling all work. `[document]`
+inserts the output file name, `[pages]` the page as `n/total` (total
+triggers an automatic second layout pass). Merged foreign pages count but
+carry no decor.
 
 ## Embedding sources and conditional rendering
 
-`[embed=Lebenslauf.txt]` inlines the file into the current document's flow
-with the `embedded` condition active; `[embed=..., newpage]` starts it on a
-fresh page, `[embed=..., newpage_no_blank]` does the same but skips the break
-when the current page is still empty (never a blank page), `[embed=..., keepmargins]` drops the file's own `[margins]` tags
-(default: they apply from that point and the parent margins are restored
-after the block). `[margins, ...]` may generally appear mid-document and
-changes the margins from that point on.
-
-Every `[...]` tag accepts `condition=embedded` or `condition=!embedded` —
-tables (a failing `[table...]` hides the whole following table), images,
-includes, `[pdf=...]`, `[embed]`, and the project tags `[pdfgen]` / `[mail]`
-(a failing one skips its whole section) / `[attach]`. So
-`[sender.txt, condition=!embedded]` shows the sender only in the standalone
-`[pdfgen=Lebenslauf.txt, file=Lebenslauf.pdf]` rendering and hides it when
-the same file is embedded. `[pdfgen=..., include]` child contexts also count
-as embedded.
+`\e Quelle.txt` (or `.md`) embeds another source into THIS document with the
+`embedded` condition active. Options: `newpage`, `newpage_no_blank`,
+`keepmargins` (ignore the child's own `\m` tags; otherwise they apply and
+the parent layout returns afterwards). Conditions: `\c embedded … \\c`
+blocks or `condition=embedded/!embedded` on any tag — the same file renders
+differently standalone vs. embedded. `[pdfgen=Quelle.txt, include]` instead
+RENDERS the source separately and merges its finished pages.
 
 ## Page margins
 
-Defaults are 1.4 cm left, 1.0 cm right, 0.5 cm top/bottom. Override them per
-document — unset values keep their defaults:
-
-```
-[pdfgen, file=X.pdf, margins=3*cm:3*cm:2*cm:1*cm]   # left:right:top:bottom
-[pdfgen, file=Y.pdf, left=2*cm, top=1*cm]           # single values
-```
-
-or with a standalone line inside the document content (also works for the
-implicit document without a [pdfgen] tag, and inside [pdfgen, include]
-sources; it wins over the tag options):
-
-```
-[margins, left=2*cm, top=3*cm]
-[margins=2*cm:2*cm:1*cm:1*cm]
-```
-
-German aliases: `links rechts oben unten raender`. Units: cm mm inch pica pt.
+Defaults: left 1.4 cm, right 1.0 cm, top/bottom 0.5 cm. A `\m`/`[margins]`
+line before any content sets the document's base layout; anywhere later it
+changes the margins from that point on (left/right immediately, top/bottom
+from the next page). Keys `left right top bottom` (German `links rechts oben
+unten`), short form `margins=l:r:t:b`, units `cm mm inch pica pt`.
 
 ## Merging PDF pages
 
-Inside document content:
-
-```
-[pdf=Site3.pdf]                     # insert all pages of an existing PDF here
-[pdfgen=Site3.txt, include]         # render Site3.txt and insert its pages
-```
-
-The current page ends, the foreign pages follow, and the text continues on a
-fresh page — which is created lazily, so chained merges or a merge at the end
-of the document never leave stray pages carrying only header/footer or
-background. A deliberately created empty page directly before a merge (e.g.
-via `[newpage]`) is kept by default; `[pdf=X.pdf, newpage_no_blank]` and
-`[pdfgen=X.txt, include, newpage_no_blank]` discard it, exactly like the
-option of the same name on `[embed]`. The importer reads classic xref tables AND modern files with
-cross-reference streams + object streams (incl. their predictors); page
-attributes inherited through the page tree are resolved. Encrypted PDFs are
-rejected with a clear message. `include` recursion is depth-limited.
+`\p Extern.pdf` inserts all pages of an existing PDF at this position —
+classic xref tables AND modern xref streams/object streams are parsed;
+encrypted files are rejected with a clear message. Pages after a merge are
+created lazily, so chained merges or a merge at the document end never leave
+stray header/footer-only pages; `newpage_no_blank` additionally discards a
+deliberately created empty page right before the merge.
 
 ## Supported text syntax inside a document
 
 | Syntax | Meaning |
 |---|---|
-| blank line | paragraph break; every *additional* blank line adds one more gap unit, so stacked blank lines raise the spacing evenly — including at the top of the file (extra space above the first heading) |
-| single newline | hard line break (`<br/>`) |
-| `# Titel` … `##### Titel` | heading level 1–5 (line must start with `#`) |
+| blank line | paragraph break; every *additional* blank line adds one more gap unit — including at the top of the file |
+| single newline | hard line break (`.txt`; in `.md` lines flow together) |
+| `# Titel` … `##### Titel` | heading level 1–5 |
 | `[date]` / `[datum]` | today's date, default `DD.MM.YYYY` |
-| `[date, format="WEEKDAY, D. MONTH YYYY", lang=de]` | formatted date. Tokens: `YYYY YY MM M DD D`, `MONTH`/`MON` (full/short month name), `WEEKDAY`/`WD`. `lang` = `en de ru pl es` (ru/pl month names in the genitive, as used in dates). Quote the format if it contains commas |
-| `[date, modified=1, ...]` | fixed date: if the output PDF already exists its file creation date is used (Linux `statx` birth time, Windows creation time, fallback mtime), otherwise today — so the date freezes after the first generation. Same formatting options |
-| `[bild.png]` | image, default 5×5 cm |
-| `[bild.png, width=3*cm]` | proportional height (units: cm, mm, inch, pica, pt) |
-| `[bild.png, height=40*mm]` | proportional width |
-| `[bild.png, width=3*cm, height=2*cm]` | exact size (may distort) |
-| `<b> <i> <u> </b> </i> </u> <br/>` | inline styling |
-| `[bild.png, width=3*cm, float=left]` | the following paragraph wraps around the image (also `float=right`) |
-| `[bild.png, width=5*cm, x=11*cm, y=3*cm]` | absolute position from the LEFT/TOP page edge on the current page; the image floats over the text and occupies no flow space |
-| `[bild.png, ..., dx=3*cm, dy=-5*mm]` | nudges a flow image visually (dx right, dy down, negatives allowed); the occupied layout space stays unchanged |
-| `[bild.webp, width=5*cm, dpi=150]` | decoded images (PNG/WebP/BMP) are downscaled to the display size at this resolution before embedding — drastically smaller PDFs (150 dpi is fine on screen and in normal prints, 300 dpi is print-perfect; alias `aufloesung`). Requires `width=` or `height=`. JPEGs are embedded verbatim and never resampled. |
-| `[bild.png, ..., layer=back]` | painted underneath the text (above a page background) — watermarks, letterhead art; default `layer=front` |
-| `\| Kopf A \| Kopf B \|` | table row (markdown pipes); cells support inline styling |
-| `\| :--- \| :---: \| ---: \|` | separator: makes the row(s) above a bold header and sets column alignment (left/center/right) |
-| `[absender.txt]` | include a text file (recursively). Alone on a line: block include, may contain headings/tables/images. Inline (e.g. in a cell): newlines become `<br/>` |
-| `[table, widths=4*cm:2:1, padding=2*mm:1*mm, spacing=0.5*cm, indent=1*cm, width=12*cm, grid=off]` | options for the table starting on the next line (German keys work too: `tabelle, breiten, innenabstand, abstand, einzug, breite, gitter`) |
+| `[date, format="WEEKDAY, D. MONTH YYYY", lang=de]` | formatted date. Tokens `YYYY YY MM M DD D MONTH MON WEEKDAY WD`; `lang` = `en de ru pl es` (ru/pl month names in the genitive). Quote formats containing commas |
+| `[date, modified=1, ...]` | frozen date: the output PDF's creation time once it exists (Linux `statx` birth time, Windows creation time, fallback mtime), otherwise today |
+| `[bild.png, width=3*cm]` | image; `width`/`height` (one = proportional, both = exact), units `cm mm inch pica pt`, default 5×5 cm |
+| `[bild.png, ..., align=center]` | left/center/right (German `ausrichtung`, `mitte`…) |
+| `[bild.png, ..., float=left]` | the following paragraph wraps around the image (also `right`) |
+| `[bild.png, ..., x=11*cm, y=3*cm]` | absolute position from the LEFT/TOP page edge; floats over the text, occupies no flow space |
+| `[bild.png, ..., dx=3*cm, dy=-5*mm]` | nudge the drawing only; the layout space stays |
+| `[bild.webp, ..., dpi=150]` | decoded images (PNG/WebP/BMP) are downscaled to the display size at this resolution — drastically smaller PDFs (150 is fine on screen and normal prints, 300 print-perfect; alias `aufloesung`). Needs `width=` or `height=`. JPEGs are embedded verbatim, never resampled |
+| `[bild.png, ..., layer=back]` | painted underneath the text (above a page background) — watermarks, letterhead art |
+| `<b> <i> <u> <s> <code> <br/>` | inline styling (strike-through and monospace included) |
+| `\| A \| B \|` + `\| :--- \| ---: \|` | table rows and separators — see tables below |
+| `[absender.txt]` | include a file (recursively; `.md` includes get markdown line semantics). Alone on a line: block include. Inline: newlines become `<br/>` |
+| `[table, widths=4*cm:2:1, padding=2*mm:1*mm, spacing=0.5*cm, rowspacing=1*mm, indent=1*cm, width=12*cm, grid=off, frame=on, linewidth=1.2*pt, linecolor=#aa2222]` | table options (German keys: `tabelle breiten innenabstand abstand zeilenabstand einzug breite gitter rahmen linienbreite linienfarbe`) |
 
-Table options: `widths` mixes fixed columns (values with a unit) and relative
-weights (bare numbers); `padding=h:v` is the inner cell padding; `spacing`
-the outer gap above and below; `indent` shifts the table right; `width` caps
-the total table width; `grid=off` hides all lines. Images work inside cells --
-`float=left/right` wraps the cell text around them, an image alone in a cell
-with `float=right` is right-aligned, and images wider than their column are
-scaled down to fit.
-
-**The letterhead is no longer inserted automatically.** Compose it yourself
-at the top of `text.txt`:
-
-```
-[table, grid=off, padding=0:0]
-| [sender.txt] | [receiver.txt] |
-```
-
-**Table borders** are OFF by default. The *first* separator row makes the
-rows above it a bold header, sets column alignment, and draws a rule at its
-position; every *further* separator row just draws a rule there — that's how
-you underline a header and put a line above a sum row with plain markdown.
-`grid=on` draws the full grid (the old behavior), `frame=on` only the outer
-box, and `linewidth=1.2*pt` / `linecolor=#aa2222` style the lines (German
-aliases: `rahmen`, `linienbreite`, `linienfarbe`).
-
-**Unicode text (Cyrillic, Polish, …):** the built-in Helvetica fonts only
-cover CP1252, so runs containing characters outside it (e.g. Russian month
-names, ą ć ę ł ń ś ź ż) are automatically shaped with an embedded DejaVu Sans
-(searched in `$PDFGEN_FONT`, `./fonts/`, and the usual system paths;
-Liberation Sans and Arial are fallbacks). The font is embedded as a
-Type0/CIDFontType2 with a ToUnicode CMap, so copy-paste and text extraction
-work. It is only embedded when actually used; documents that use it grow by
-the compressed font size (~400 KB — subsetting would be the next
-optimization). Lines containing embedded-font runs are set at natural word
-spacing instead of justified. If no Unicode font is found, those characters
-fall back to `?` with a warning.
+**Tables:** borders are OFF by default. The *first* separator row makes the
+rows above it a bold header (repeated across page breaks), sets column
+alignment and draws a rule; every *further* separator just draws a rule —
+that's how you underline a header and put a line above a sum row. `grid=on`
+draws the full grid, `frame=on` only the outer box. `widths` mixes fixed
+columns (values with units) and weights (bare numbers). Compose letterheads
+yourself: `[table, grid=off, padding=0:0]` with `| [sender.txt] |
+[receiver.txt] |`. With spacing/padding/indent/rowspacing at 0, table rows
+fall exactly into the 16 pt body rhythm.
 
 **Column spans:** pipes directly after one another extend the cell before
-them — `| Titel über zwei Spalten || C |` makes the first cell span two
-columns, `| Gesamt |||` spans all three. Only zero-width segments count:
-`| |` with a space stays an ordinary empty cell. Spanned cells take the
-alignment of their first column, grid lines are drawn per row so spans are
-never cut through, and header repetition across page breaks keeps the spans.
+them — `| Titel über zwei || C |`, `| Gesamt |||` spans all columns. Only
+zero-width segments count (`| |` stays an empty cell). Spans take the first
+column's alignment; grid lines are drawn per row so spans are never cut
+through. Headings work inside cells (`| # Titel |`) and keep the column
+alignment. Images work inside cells, wrap cell text with `float`, and are
+scaled down to fit their column.
 
-Headings work inside table cells too: `| # Titel | ... |` renders large and
-bold, keeps the column alignment, and the `#` never appears in the PDF —
-handy for a letterhead with the title left and `[date...]` right-aligned.
-
-Cell text uses the body metrics (11 pt, 16 pt leading, left-aligned). With
-`spacing`, `padding`, `indent` and `rowspacing` set to 0, table rows fall on
-exactly the same 16 pt rhythm as paragraph lines — including the transition
-from a preceding paragraph, because a table with its own `spacing=` value
-suppresses the default gap to the text above it. Dimension values may also
-glue number and unit together (`0mm`, `2mm`, `0.5cm` — same as `2*mm`), and
-invalid values now produce a warning instead of silently keeping defaults.
-
-Tables span the full text width with column widths proportional to their
-content; long tables split across pages and repeat the header row. Floats
-break the paragraph's first lines to a narrow box beside the image and
-continue full-width below it — justification stays correct in both zones
-because every line carries its own box geometry (the Python version only
-approximated this by counting characters).
-
-Body text is 11 pt Helvetica, 16 pt leading, **justified** (like the Python
-`Body` style). Margins are identical: 1.4 cm left, 1.0 cm right, 0.5 cm
-top/bottom, A4. Sender/receiver appear side by side when both files exist.
+**Unicode text (Cyrillic, Polish, …):** the built-in Helvetica/Courier only
+cover CP1252; runs outside it are shaped with an embedded DejaVu Sans
+(searched in `$PDFGEN_FONT`, `./fonts/`, system paths; Liberation/Arial as
+fallbacks), embedded as Type0/CIDFontType2 with ToUnicode — copy-paste and
+extraction work. Embedded only when used (~400 KB compressed). Lines with
+embedded-font runs are set at natural word spacing instead of justified.
 
 ## Differences from the Python version (deliberate)
 
-* `[datum]` inserts **today's** date inline (the Python code hard-coded
-  `01.01.1994` and put it in its own paragraph). Change it in one place:
-  `opt.datumText` in `main.cpp`.
-* Multiple `--path` arguments are handled (was a TODO in Python).
-* Images: JPEG/PNG/WebP/BMP are supported (WebP incl. lossy, lossless and
-  alpha; animated WebP is rejected). GIF produces a warning and is skipped —
-  convert with e.g. `convert bild.gif bild.png`. Interlaced or 16-bit PNGs are
-  also rejected with a clear message.
-* Fonts are the built-in Helvetica family with WinAnsi encoding — German
-  umlauts, ß, €, „quotes“ and dashes all work; text outside CP1252 becomes `?`.
-  Embedding custom TTFs would be the next feature to add in `pdfwriter.cpp`.
-* Page background: `doc.setBackground("#f5eee4")` in `main.cpp` replicates the
-  commented-out colored background (default is plain white, no rect drawn).
+No letterhead automatism (compose it with a table), explicit image sizes
+instead of magic scaling, conditions/styles/loops/markdown did not exist,
+and the mail credentials moved from compile-time constants to runtime
+configuration. The Python parser nesting is gone — see Architecture.
 
 ## Extending
 
-* **New tag type** → add a `Token::Kind`, recognize it in `tokenize()`,
-  map it in `buildFlowables()`. Two switch cases, no other file changes.
-* **Tables & floats** live in `TableFlow` / `FloatFlow` (`flowables.cpp`);
-  the per-line box mechanism (`Paragraph::setLineBoxes`) is reusable for any
-  future shaped-text feature (e.g. drop caps, two floats).
-* **New flowable** (e.g. horizontal rule) → subclass `Flowable`, implement
-  `wrap()` + `draw()`; implement `splitTop()` only if it may straddle pages.
-* **Text-wrap around images / gradients** → both are canvas-level tricks in
-  the Python file; the equivalent here is emitting extra operators in a
-  `Flowable::draw()` (see `ImageFlow::draw` for the pattern).
+A new whole-line tag: add one `Token::Kind`, parse it in `tokenize()`, build
+its flowable in `buildFlowables()` — no other tag changes. A new flowable:
+subclass `Flowable` (wrap/draw/clone). A new image format: one decoder in
+`image.cpp` filling the same `ImageXObject`. A new mail provider: one line
+in the `kProviders` table in `mail_config.cpp`. A new auth mechanism: append
+one `smtp_auth` value and one `case` in `gmail_send.c` — no signature or
+input format changes. Every header carries a `PDFGEN_*_API` number checked
+by `#error` guards, so mixed-version source trees fail loudly at compile
+time instead of misbehaving.
