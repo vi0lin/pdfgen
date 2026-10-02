@@ -517,7 +517,7 @@ void TableFlow::computeColumnWidths(double width) {
       int sp = std::max(1, cell.span);
       if (cell.flow && sp == 1 && col < nCols_)
         desired[col] = std::max(desired[col],
-                                cell.flow->naturalWidth() + 2 * opts_.padH + 2);
+                                cell.flow->naturalWidth() + padL(col) + padR(col, sp) + 2);
       col += sp;
     }
   }
@@ -550,7 +550,7 @@ void TableFlow::layoutRows() {
       double w = 0;
       for (int k = 0; k < sp && col + k < nCols_; ++k) w += colW_[col + k];
       if (cell.flow)
-        h = std::max(h, cell.flow->wrap(std::max(w - 2 * opts_.padH, 1.0)));
+        h = std::max(h, cell.flow->wrap(std::max(w - padL(col) - padR(col, sp), 1.0)));
       col += sp;
     }
     rowH_[r] = h + 2 * opts_.padV;
@@ -596,7 +596,7 @@ void TableFlow::draw(Writer& w, double x, double yTop) {
     size_t col = 0;
     for (const auto& cell : rows_[r]) {
       int sp = std::max(1, cell.span);
-      if (cell.flow) cell.flow->draw(w, cx + opts_.padH, y - opts_.padV);
+      if (cell.flow) cell.flow->draw(w, cx + padL(col), y - opts_.padV);
       for (int k = 0; k < sp && col < nCols_; ++k, ++col) cx += colW_[col];
     }
     y -= rowH_[r];

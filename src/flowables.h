@@ -319,6 +319,12 @@ private:
   std::vector<Row> rows_;
   int headerRows_;
   TableOpts opts_;
+  // INNENABSTAND AUSSEN NUR MIT GITTER/RAHMEN. [Ohne Linien sass die erste
+  //  Spalte um padH (4 pt) rechts vom Textrand -- das war der "Einzug", den
+  //  man bei jeder Tabelle sah. Jetzt beginnt die erste Spalte buendig und
+  //  die letzte endet buendig; zwischen den Spalten bleibt padH.]
+  double padL(size_t col) const { return (col == 0 && !opts_.grid && !opts_.frame) ? 0.0 : opts_.padH; }
+  double padR(size_t col, int span) const { return (col + (size_t)std::max(1, span) >= nCols_ && !opts_.grid && !opts_.frame) ? 0.0 : opts_.padH; }
   Style style_;                    // carries spaceBefore/After from opts
   size_t nCols_ = 0;
   std::vector<double> colW_;       // computed by wrap (or frozen by splitTop)
