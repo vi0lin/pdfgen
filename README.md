@@ -1,8 +1,4 @@
-> [!WARNING]
-> Its not yet as major changes have been applied yesterday.
-
-# pdfgen
-A pdf generator with its own syntax and easy c and c++ integration in c and c++ plus mail delivery.
+# pdfgen — C++ port of pdfgen.py
 
 Generates `DIR/Bewerbung.pdf` from `DIR/{sender.txt, receiver.txt, text.txt}`,
 writing the PDF file format directly. No PDF library needed; dependencies are
@@ -176,6 +172,18 @@ block-table cells and full-width rows; `@` inside the body gives one
 keep-together group per record. Data files are read verbatim; out-of-range
 fields warn once per loop and insert nothing. JSON input (`\jloop`) is
 planned but deliberately postponed.
+
+**`\file` and the range syntax:** `\file datei.txt(, D=...)` … `\\file` is
+`\loop` without iteration — one pass, the fields are ALL lines of the file
+(global numbering). Both tags share one placeholder grammar
+`:START(:END)?` driven by a cursor that sits after the last delivered line:
+START = absolute number, `+N`/`-N` cursor-relative (backwards re-delivers
+earlier lines), `.` = line 0, `$var`, or empty = cursor. END = absolute
+number, `+N` = START+N inclusive (`:10:+4` → 10..14), `$var`, `$` = always
+the file/record end, or empty = to the end — or to the next delimiter when
+`D=` is set on the tag. `$name='<` / `$name='>` after a placeholder store its
+first/last delivered line number for reuse via `:$name`. Parse failures stay
+literal, so ordinary colons in prose are safe.
 
 **Block tables (`\t` … `\\t`):** a `|`-row may span several physical lines —
 it ends at the first line that ENDS with `|`, and line breaks inside a cell

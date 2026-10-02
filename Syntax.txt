@@ -135,6 +135,24 @@ Zurück im Hauptdokument, wieder mit Standardrändern.
 \\loop
 \\t
 
+## 11b. \file und die Bereichs-Syntax
+
+›\file datei.txt(, D=...)‹ … ›\\file‹ ist der \loop ohne Wiederholung: EIN Durchlauf, die Felder sind alle Zeilen der Datei (globale Nummerierung). In \loop und \file gilt dieselbe Platzhalter-Grammatik ›:START(:END)?‹ mit einem Cursor, der nach jeder Lieferung hinter der letzten Zeile steht:
+
+START — Zahl = absolut; ›+N‹/›-N‹ = relativ zum Cursor (auch rückwärts zu bereits gelieferten Zeilen); leer = Cursor; ›.‹ = Zeile 0; ›$var‹ = Variable.
+END — Zahl = absolut; ›+N‹ = START+N (einschließlich, ›:10:+4‹ liefert 10–14); ›$var‹; leer = bis zum Ende bzw. bis zum nächsten Delimiter, wenn D= am Tag gesetzt ist; ›$‹ = garantiert bis zum Datei-/Datensatzende.
+
+›$name='<‹ und ›$name='>‹ hinter einem Platzhalter speichern dessen erste bzw. letzte Zeilennummer; danach per ›:$name‹ nutzbar. Live (werte.txt hat 6 Zeilen):
+
+\file werte.txt
+\t grid=on, widths=1:2
+| :0 | :1:+2 $a='< $e='> |
+| nochmal ab $a | :$a:$e |
+| Cursor weiter | ::+0 |
+| Rest ab 4 | :4:$ |
+\\t
+\\file
+
 ## 12. Fremde PDFs einfügen: \p und \pdfgen include
 
 ›  \p Extern.pdf‹ fügt alle Seiten einer bestehenden PDF an dieser Stelle ein (klassische wie moderne Dateien mit xref-Streams; verschlüsselte werden abgelehnt); Option newpage_no_blank verwirft eine leere Seite davor. ›\pdfgen Quelle.txt, include‹ rendert die Quelle und fügt deren Seiten ein. Nach dem Einschub geht es auf einer frischen Seite weiter — Kopf/Fuß erscheinen nur auf eigenen Seiten. Live folgt jetzt Extern.pdf:

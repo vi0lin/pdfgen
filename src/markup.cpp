@@ -15,7 +15,7 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: it lacks PDFGEN_MARKUP_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_MARKUP_API != 14
+#elif PDFGEN_MARKUP_API != 15
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
@@ -308,7 +308,8 @@ std::string translateBackslashTags(const std::string& text,
 
     // native pass-through: block tables, spacing, conditional blocks
     if (word == "t" || word == "table" || word == "tabelle" ||
-        word == "s" || word == "c") { emit(line); continue; }
+        word == "s" || word == "c" || word == "loop" || word == "file")
+      { emit(line); continue; }
 
     static const struct { const char* w; const char* name; bool headVal; bool block; }
     map[] = {
@@ -499,7 +500,7 @@ std::string applyStyles(const std::string& text,
       bool isT = low == "\\t" || low.rfind("\\t ", 0) == 0 ||
                  low.rfind("\\t,", 0) == 0 ||
                  low.rfind("\\table", 0) == 0 || low.rfind("\\tabelle", 0) == 0;
-      bool isLoop = low.rfind("\\loop", 0) == 0;
+      bool isLoop = low.rfind("\\loop", 0) == 0 || low.rfind("\\file", 0) == 0;
       if (isT || isLoop) {
         size_t sp = t.find_first_of(" ,");
         std::string word = sp == std::string::npos ? t : t.substr(0, sp);
@@ -507,7 +508,8 @@ std::string applyStyles(const std::string& text,
         if (!rest.empty() && rest[0] == ',') rest = trim(rest.substr(1));
         auto parts = splitParams(rest);
         std::string head;
-        std::string kind = isT ? "table" : "loop";
+        std::string kind = isT ? "table"
+                         : (low.rfind("\\file", 0) == 0 ? "file" : "loop");
         if (isLoop && !parts.empty() &&
             parts[0].find('=') == std::string::npos && !parts[0].empty()) {
           head = parts[0];                          // loop data file
@@ -657,54 +659,188 @@ std::string unescapeDelim(const std::string& v) {
   return out;
 }
 
-// Replaces :A / :A:B / :A: placeholders with record fields (= lines).
-// A ':' only starts a placeholder when preceded by nothing, whitespace or
-// '|', and followed by a digit.
-std::string substFields(const std::string& line,
-                        const std::vector<std::string>& fields,
-                        bool& rangeWarned, std::vector<std::string>& warnings) {
+// Placeholder engine shared by \loop and \file.
+//
+//   :START(:END)?        START: absolute number | +N / -N relative to the
+//                        cursor | '.' (line 0) | $var | empty (= cursor)
+//                        END:   absolute number | +N (START+N, inclusive)
+//                        | $var | '$' (definitely file/record end) | empty
+//                        (to the end, or to the next delimiter when D= is
+//                        set on the tag)
+//   $name='<  $name='>   store the FIRST / LAST delivered line number of
+//                        the most recent placeholder into a variable
+//
+// The cursor starts at 0 and moves to (last delivered line + 1) after every
+// placeholder that delivered something.
+struct FieldCtx {
+  const std::vector<std::string>& fields;
+  // last line of the delimiter segment containing line i (= fields.size()-1
+  // when no delimiter is set)
+  const std::vector<long>& segEnd;
+  long cursor = 0;
+  long lastStart = -1, lastEnd = -1;
+  std::map<std::string, long> vars;
+  bool warned = false;
+};
+
+bool parseRangeValue(const std::string& line, size_t& j, const FieldCtx& ctx,
+                     bool isEnd, long start, long& out, bool& toEof) {
+  toEof = false;
+  if (j >= line.size()) return false;
+  char c = line[j];
+  auto readNum = [&](long& v) {
+    size_t k = j;
+    v = 0;
+    while (k < line.size() && std::isdigit((unsigned char)line[k]))
+      v = v * 10 + (line[k++] - '0');
+    bool any = k > j;
+    j = k;
+    return any;
+  };
+  if (c == '+' || c == '-') {
+    ++j;
+    long n;
+    if (!readNum(n)) return false;
+    out = isEnd ? start + (c == '+' ? n : -n)
+                : ctx.cursor + (c == '+' ? n : -n);
+    return true;
+  }
+  if (c == '.' && !isEnd) { ++j; out = 0; return true; }
+  if (c == '$') {
+    size_t k = j + 1;
+    std::string name;
+    while (k < line.size() &&
+           (std::isalnum((unsigned char)line[k]) || line[k] == '_'))
+      name += line[k++];
+    if (name.empty()) {                            // bare '$' = end of file
+      if (!isEnd) return false;
+      j = k;
+      out = (long)ctx.fields.size() - 1;
+      toEof = true;
+      return true;
+    }
+    auto it = ctx.vars.find(name);
+    if (it == ctx.vars.end()) return false;        // unknown var: literal
+    j = k;
+    out = it->second;
+    return true;
+  }
+  if (std::isdigit((unsigned char)c)) return readNum(out);
+  return false;
+}
+
+std::string substFields(const std::string& line, FieldCtx& ctx,
+                        const char* tagName,
+                        std::vector<std::string>& warnings) {
   std::string out;
   size_t i = 0;
+  long n = (long)ctx.fields.size();
   while (i < line.size()) {
     char prev = out.empty() ? ' ' : out.back();
-    if (line[i] == ':' && i + 1 < line.size() &&
-        std::isdigit((unsigned char)line[i + 1]) &&
-        (prev == ' ' || prev == '\t' || prev == '|')) {
+    bool boundary = prev == ' ' || prev == '\t' || prev == '|';
+
+    // variable assignment  $name='<  /  $name='>
+    if (line[i] == '$' && boundary) {
+      size_t j = i + 1;
+      std::string name;
+      while (j < line.size() &&
+             (std::isalnum((unsigned char)line[j]) || line[j] == '_'))
+        name += line[j++];
+      if (!name.empty() && j + 2 < line.size() && line[j] == '=' &&
+          line[j + 1] == '\'' && (line[j + 2] == '<' || line[j + 2] == '>')) {
+        if (ctx.lastStart < 0)
+          warnings.push_back(std::string(tagName) +
+                             ": $" + name + "='" + line[j + 2] +
+                             " before any placeholder");
+        else
+          ctx.vars[name] = line[j + 2] == '<' ? ctx.lastStart : ctx.lastEnd;
+        i = j + 3;
+        if (i < line.size() && line[i] == ' ') ++i;   // swallow one space
+        continue;
+      }
+    }
+
+    if (line[i] == ':' && boundary && i + 1 <= line.size()) {
       size_t j = i + 1;
       long a = 0;
-      while (j < line.size() && std::isdigit((unsigned char)line[j]))
-        a = a * 10 + (line[j++] - '0');
-      long b = a;
-      bool open = false;
-      if (j < line.size() && line[j] == ':') {
-        ++j;
-        if (j < line.size() && std::isdigit((unsigned char)line[j])) {
-          b = 0;
-          while (j < line.size() && std::isdigit((unsigned char)line[j]))
-            b = b * 10 + (line[j++] - '0');
-        } else open = true;                          // ":4:" -> to the end
-      }
-      if (open) b = (long)fields.size() - 1;
-      if (a >= (long)fields.size()) {
-        if (!rangeWarned) {
-          warnings.push_back("loop: field :" + std::to_string(a) +
-                             " is beyond the record (has " +
-                             std::to_string(fields.size()) + " lines)");
-          rangeWarned = true;
-        }
+      bool aOk = false, dummyEof = false;
+      if (j < line.size() && line[j] == ':') {       // "::..." empty start
+        a = ctx.cursor;
+        aOk = true;
       } else {
-        if (b >= (long)fields.size()) b = (long)fields.size() - 1;
-        for (long k = a; k <= b; ++k) {
-          if (k > a) out += '\n';
-          out += fields[k];
-        }
+        aOk = parseRangeValue(line, j, ctx, false, 0, a, dummyEof);
       }
-      i = j;
-      continue;
+      if (aOk) {
+        long b;
+        bool haveEnd = false, toEof = false, openEnd = false;
+        if (j < line.size() && line[j] == ':') {
+          ++j;
+          size_t save = j;
+          if (parseRangeValue(line, j, ctx, true, a, b, toEof)) haveEnd = true;
+          else { j = save; openEnd = true; }         // ":A:" open end
+        } else {
+          b = a;                                     // ":A" single line
+          haveEnd = true;
+        }
+        if (openEnd) {
+          b = (a >= 0 && a < n) ? ctx.segEnd[(size_t)a] : n - 1;
+        }
+        // clamp + deliver
+        long a2 = a, b2 = b;
+        if (a2 < 0) a2 = 0;
+        if (b2 >= n) b2 = n - 1;
+        if (a >= n || b2 < a2) {
+          if (!ctx.warned) {
+            warnings.push_back(std::string(tagName) + ": range :" +
+                               std::to_string(a) + ":" + std::to_string(b) +
+                               " is empty (record has " + std::to_string(n) +
+                               " lines)");
+            ctx.warned = true;
+          }
+        } else {
+          for (long k = a2; k <= b2; ++k) {
+            if (k > a2) out += '\n';
+            out += ctx.fields[(size_t)k];
+          }
+          ctx.lastStart = a2;
+          ctx.lastEnd = b2;
+          ctx.cursor = b2 + 1;
+        }
+        (void)haveEnd;
+        i = j;
+        continue;
+      }
     }
     out += line[i++];
   }
   return out;
+}
+
+// segment-end table for open-ended ranges stopping at a delimiter
+std::vector<long> buildSegEnds(const std::string& norm,
+                               const std::vector<std::string>& fields,
+                               const std::string& delim, bool useDelim) {
+  long n = (long)fields.size();
+  std::vector<long> segEnd((size_t)std::max<long>(n, 1), n - 1);
+  if (!useDelim || delim.empty() || n == 0) return segEnd;
+  // Every delimiter occurrence closes the segment of the line it starts on.
+  // When the delimiter itself starts with a newline, that newline is the
+  // terminator of the PREVIOUS line, which therefore still belongs to the
+  // segment; otherwise the hit line is cut short and the segment ends one
+  // line earlier.
+  std::vector<long> ends;                            // segment end lines
+  size_t pos = 0;
+  while ((pos = norm.find(delim, pos)) != std::string::npos) {
+    long lineOfHit = (long)std::count(norm.begin(), norm.begin() + (long)pos, '\n');
+    ends.push_back(delim[0] == '\n' ? lineOfHit : lineOfHit - 1);
+    pos += delim.size();
+  }
+  size_t e = 0;
+  for (long i = 0; i < n; ++i) {
+    while (e < ends.size() && ends[e] < i) ++e;
+    segEnd[(size_t)i] = e < ends.size() ? std::max(ends[e], i) : n - 1;
+  }
+  return segEnd;
 }
 
 } // namespace
@@ -728,9 +864,13 @@ std::string expandLoops(const std::string& text, const std::string& baseDir,
     std::string low = toLower(t);
     bool isLoop = low.rfind("\\loop", 0) == 0 &&
                   (t.size() == 5 || t[5] == ' ' || t[5] == '\t' || t[5] == ',');
-    if (!isLoop) { emit(lines[li]); continue; }
+    bool isFile = low.rfind("\\file", 0) == 0 &&
+                  (t.size() == 5 || t[5] == ' ' || t[5] == '\t' || t[5] == ',');
+    if (!isLoop && !isFile) { emit(lines[li]); continue; }
+    const char* tagName = isFile ? "file" : "loop";
+    const std::string closeTag = isFile ? "\\\\file" : "\\\\loop";
 
-    // parse "\loop file[, D=...]"
+    // parse "\loop file[, D=...]"  /  "\file file[, D=...]"
     std::string rest = trim(t.substr(5));
     if (!rest.empty() && rest[0] == ',') rest = trim(rest.substr(1));
     std::string file, delim = "\n\n";
@@ -747,35 +887,37 @@ std::string expandLoops(const std::string& text, const std::string& baseDir,
         else if (key == "d" || key == "delim" || key == "trenner")
           delim = unescapeDelim(trim(part.substr(eq + 1)));
         else if (!part.empty())
-          warnings.push_back("\\loop: unknown option: " + part);
+          warnings.push_back(std::string("\\") + tagName +
+                             ": unknown option: " + part);
         first = false;
       }
     }
-    // collect the body up to \\loop
+    // collect the body up to the closing tag
     size_t bodyStart = li + 1, bodyEnd = bodyStart;
     bool closed = false;
     for (size_t j = bodyStart; j < lines.size(); ++j) {
       std::string jt = toLower(trim(lines[j]));
-      if (jt == "\\\\loop") { bodyEnd = j; closed = true; break; }
-      if (jt.rfind("\\loop", 0) == 0 &&
+      if (jt == closeTag) { bodyEnd = j; closed = true; break; }
+      if ((jt.rfind("\\loop", 0) == 0 || jt.rfind("\\file", 0) == 0) &&
           (trim(lines[j]).size() == 5 || jt[5] == ' ' || jt[5] == ',')) {
-        warnings.push_back("nested \\loop is not supported yet");
+        warnings.push_back("nested \\loop/\\file is not supported yet");
       }
     }
     if (!closed) {
-      warnings.push_back("\\loop without \\\\loop");
+      warnings.push_back(std::string("\\") + tagName + " without \\\\" + tagName);
       emit(lines[li]);
       continue;
     }
     if (file.empty()) {
-      warnings.push_back("\\loop needs a data file: \\loop werte.txt");
+      warnings.push_back(std::string("\\") + tagName +
+                         " needs a data file: \\" + tagName + " werte.txt");
       li = bodyEnd;
       continue;
     }
     std::string path = baseDir.empty() ? file : baseDir + "/" + file;
     std::ifstream in(path, std::ios::binary);
     if (!in) {
-      warnings.push_back("\\loop: cannot read " + path);
+      warnings.push_back(std::string("\\") + tagName + ": cannot read " + path);
       li = bodyEnd;
       continue;
     }
@@ -786,7 +928,31 @@ std::string expandLoops(const std::string& text, const std::string& baseDir,
     for (size_t k = 0; k < data.size(); ++k)
       if (data[k] != '\r') norm += data[k];
 
-    // split into records
+    if (isFile) {
+      // \file: ONE pass over the whole file; absolute numbers are file
+      // lines. Open-ended ranges stop at the next delimiter when D= is set.
+      bool delimSet = !delim.empty() && delim != "\n\n" ? true : false;
+      // D=\n\n explicitly given also counts as set; detect via raw rest
+      if (rest.find("D=") != std::string::npos ||
+          rest.find("d=") != std::string::npos ||
+          toLower(rest).find("delim=") != std::string::npos ||
+          toLower(rest).find("trenner=") != std::string::npos)
+        delimSet = true;
+      std::vector<std::string> fields;
+      {
+        std::stringstream rs(norm);
+        std::string fl;
+        while (std::getline(rs, fl)) fields.push_back(fl);
+      }
+      auto segEnd = buildSegEnds(norm, fields, delim, delimSet);
+      FieldCtx ctx{fields, segEnd};
+      for (size_t j = bodyStart; j < bodyEnd; ++j)
+        emit(substFields(lines[j], ctx, tagName, warnings));
+      li = bodyEnd;
+      continue;
+    }
+
+    // \loop: split into records
     std::vector<std::string> records;
     if (delim.empty()) delim = "\n\n";
     size_t pos = 0;
@@ -804,17 +970,19 @@ std::string expandLoops(const std::string& text, const std::string& baseDir,
     if (records.empty())
       warnings.push_back("\\loop: " + file + " has no records");
 
-    // expand the body once per record
+    // expand the body once per record (cursor and variables reset each time)
     for (const auto& rec : records) {
       std::vector<std::string> fields;
       std::stringstream rs(rec);
       std::string fl;
       while (std::getline(rs, fl)) fields.push_back(fl);
-      bool rangeWarned = false;
+      std::vector<long> segEnd((size_t)std::max<size_t>(fields.size(), 1),
+                               (long)fields.size() - 1);
+      FieldCtx ctx{fields, segEnd};
       for (size_t j = bodyStart; j < bodyEnd; ++j)
-        emit(substFields(lines[j], fields, rangeWarned, warnings));
+        emit(substFields(lines[j], ctx, tagName, warnings));
     }
-    li = bodyEnd;                                    // skip past \\loop
+    li = bodyEnd;                                    // skip past the closer
   }
   if (!text.empty() && text.back() != '\n' && !out.empty()) out.pop_back();
   return out;
@@ -960,7 +1128,7 @@ bool fileCreationTime(const std::string& path, std::time_t& out) {
   out = (std::time_t)((u.QuadPart - 116444736000000000ULL) / 10000000ULL);
   return true;
 #else
-#if defined(__linux__) && (!defined(__ANDROID__) || __ANDROID_API__ >= 30)
+#ifdef __linux__
   struct statx stx;
   if (statx(AT_FDCWD, path.c_str(), 0, STATX_BTIME | STATX_MTIME, &stx) == 0) {
     if (stx.stx_mask & STATX_BTIME) { out = stx.stx_btime.tv_sec; return true; }
