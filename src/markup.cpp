@@ -1124,7 +1124,8 @@ std::string unescapeDelim(const std::string& v) {
 // Placeholder engine shared by \loop and \file.
 //
 //   :START(:END)?        START: absolute number | +N / -N relative to the
-//                        cursor | '.' (line 0) | $var | empty (= cursor)
+//                        LAST delivered line (+0 = same again, +1 = next)
+//                        | '.' (line 0) | $var | empty (= cursor = next unread)
 //                        END:   absolute number | +N (START+N, inclusive)
 //                        | $var | '$' (definitely file/record end) | empty
 //                        (to the end, or to the next delimiter when D= is
@@ -1163,8 +1164,14 @@ bool parseRangeValue(const std::string& line, size_t& j, const FieldCtx& ctx,
     ++j;
     long n;
     if (!readNum(n)) return false;
+    // START: +N/-N relativ zur LETZTEN gelieferten Zeile: :+0 = dieselbe
+    // Zeile noch einmal, :+1 = die naechste, :-1 = die davor. Vor dem ersten
+    // Platzhalter zaehlt "letzte Zeile" als -1, also :+1 = Zeile 0.
+    // (Leerer Start ":" / "::" = Cursor = naechste ungelesene Zeile.)
+    // END: +N = START+N (inklusive), wie gehabt.
     out = isEnd ? start + (c == '+' ? n : -n)
-                : ctx.cursor + (c == '+' ? n : -n);
+                : ctx.lastEnd + (c == '+' ? n : -n);
+    if (!isEnd && out < 0) out = 0;
     return true;
   }
   if (c == '.' && !isEnd) { ++j; out = 0; return true; }
@@ -1971,7 +1978,21 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
       }
       std::string bt = trim(line);
       std::string btl = toLower(bt);
-      if (bt.empty()) { flushPartialRows(); continue; }
+      if (bt.empty()) {
+        // LEERZEILE IM TABELLENBLOCK = eine Textzeile (16 pt) Abstand nach der
+        // letzten Zeile -- wie \r spacing=16*pt. Bedingt: an einem
+        // Seitenumbruch faellt der Abstand weg, weil Zeilenabstaende nur
+        // zwischen Zeilen derselben Seite gezeichnet werden. Mehrere
+        // Leerzeilen addieren sich; vor der ersten Zeile zaehlen sie nicht.
+        flushPartialRows();
+        if (!pendingTable.rows.empty()) {
+          const int after = (int)pendingTable.rows.size() - 1;
+          bool da = false;
+          for (auto& g : pendingTable.topts.rowGapOverrides) if (g.first == after) { g.second += 16.0; da = true; }
+          if (!da) pendingTable.topts.rowGapOverrides.push_back({after, 16.0 + pendingTable.topts.rowGap});
+        }
+        continue;
+      }
       if (btl == "\\\\t" || btl == "\\\\table" || btl == "\\\\tabelle") {
         flushPartialRows();
         if (groupOpen) {                            // auto-close open group

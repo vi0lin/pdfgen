@@ -234,8 +234,11 @@ body gives one keep-together group per record. Data files are read verbatim.
 `\loop` without iteration — one pass, the fields are ALL lines of the file
 (global numbering). Both tags share one placeholder grammar
 `:START(:END)?` driven by a cursor that sits after the last delivered line:
-START = absolute number, `+N`/`-N` cursor-relative (backwards re-delivers
-earlier lines), `.` = line 0, `$var`, or empty = cursor. END = absolute
+START = absolute number, `+N`/`-N` relative to the LAST delivered line
+(`:+0` = the same line again, `:+1` = the next one, `:-1` = the one before;
+before the first placeholder "last" counts as -1, so `:+1` is line 0),
+`.` = line 0, `$var`, or empty = cursor (`:` = next unread line, `::` = next
+unread line to the end). END = absolute
 number, `+N` = START+N inclusive (`:10:+4` → 10..14), `$var`, `$` = always
 the file/record end, or empty = to the end — or to the next delimiter when
 `D=` is set on the tag. `$name='<` / `$name='>` after a placeholder store its
@@ -360,6 +363,15 @@ Ihr Angebot
 
 In HTML, `[pdf=...]` becomes a link and `[pdfgen=..., include]` is skipped
 (both with a warning); margins have no meaning there.
+
+### Blank lines inside a table block
+
+An empty line between two rows of a `\t … \\t` block adds one text line
+(16 pt) of space after the row above -- the same as `\r spacing=16*pt`.
+It is conditional by nature: row gaps are only drawn between rows on the
+same page, so a record that starts a new page gets no stray blank line at
+the top. Several empty lines add up; empty lines before the first row are
+ignored. Typical use: a CV loop with one blank line after every entry.
 
 ## Mail merge: one source, many PDFs and mails
 
