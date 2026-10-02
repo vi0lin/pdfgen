@@ -12,6 +12,8 @@
 // Adding a new tag type = one new Token::Kind + one case in each stage.
 //
 // Recognized input syntax (unchanged from the Python version):
+//   \[  \]                       literal square brackets in the output —
+//                                 never interpreted as a tag anywhere
 //   // Kommentar                  a line starting with // (after optional
 //                                 indentation) is dropped entirely
 //   [newpage]                     forces a page break ([neueseite] works too)
@@ -118,7 +120,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_MARKUP_API 14
+#define PDFGEN_MARKUP_API 15
 #include <functional>
 #include <string>
 #include <vector>
@@ -141,6 +143,7 @@ struct Token {
   double widthPt  = -1;    // Image only, -1 = not given
   double heightPt = -1;    // Image only, -1 = not given
   int floatSide = 0;       // Image only: 0 none, 1 left, 2 right
+  int align = 0;           // Image: 0 left, 1 center, 2 right
   bool hasAbs = false;     // Image: x=/y= given
   double absX = 0, absY = 0;
   double dx = 0, dy = 0;
@@ -151,7 +154,6 @@ struct Token {
   std::vector<std::vector<std::string>> rows;  // Table: cell markup per row
   std::vector<std::vector<int>> spans;         // Table: column span per cell
   std::vector<int> aligns;                     // Table: 0 left, 1 center, 2 right
-  int align = 0;                               // Image: 0 left, 1 center, 2 right (API 14)
   int headerRows = 0;                          // Table: leading bold rows
   pdf::TableOpts topts;                        // Table: layout options
   int blankLines = 1;                          // ParagraphEnd: gap multiplier
