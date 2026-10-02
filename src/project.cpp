@@ -14,7 +14,7 @@
 // ---- release consistency check ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_MARKUP_API != 14
+#elif PDFGEN_MARKUP_API != 15
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
@@ -114,17 +114,21 @@ void applyMarginOpts(const std::vector<std::pair<std::string,std::string>>& opts
   }
 }
 
-// Finds a whole-line [margins...] tag in the source, applies it to `lay`,
-// and removes the line. The first occurrence wins.
+// Finds a LEADING whole-line [margins...] tag (only blank lines before it)
+// and applies it as the document's base layout, removing the line. A
+// [margins] tag after any content stays in the flow and changes the margins
+// from that point on instead.
 void extractMarginsTag(std::string& text, PageLayout& lay,
                        std::vector<std::string>& warnings) {
   std::stringstream ss(text);
   std::string line, out;
   bool done = false;
+  bool contentSeen = false;
   while (std::getline(ss, line)) {
     std::string t = trim(line);
     std::string low = toLower(t);
-    if (!done && low.rfind("[margins", 0) == 0 && !t.empty() && t.back() == ']') {
+    if (!done && !contentSeen && low.rfind("[margins", 0) == 0 &&
+        !t.empty() && t.back() == ']') {
       std::string inner = t.substr(1, t.size() - 2);
       std::vector<std::string> parts;
       std::string cur;
@@ -146,6 +150,7 @@ void extractMarginsTag(std::string& text, PageLayout& lay,
       done = true;
       continue;                                   // strip the line
     }
+    if (!t.empty()) contentSeen = true;
     out += line + "\n";
   }
   text = out;
@@ -440,6 +445,8 @@ bool renderDocument(const std::string& baseDir, const std::string& sourceText,
 
   // [embed=...] blocks (their conditions run with embedded=true)
   text = expandEmbeds(text, baseDir, layout, warnings, depth);
+  // \loop / \file blocks over data files
+  text = markup::expandLoops(text, baseDir, warnings);
 
   markup::Options opt;
   opt.pdfPath = outPdfPath;                       // for [date, modified=1]
