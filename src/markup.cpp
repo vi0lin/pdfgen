@@ -331,12 +331,24 @@ std::string translateBackslashTags(const std::string& text,
       {"h", "header", false, true}, {"header", "header", false, true},
       {"b", "bottom", false, true}, {"bottom", "bottom", false, true},
       {"e", "embed", true, false},  {"embed", "embed", true, false},
-      {"p", "pdf", true, false},    {"pdf", "pdf", true, false},
+      {"p", "pdf", true, false},    {"merge", "pdf", true, false},   // Seiten einer PDF-Datei einbinden
+      {"pdf", "pdf", true, false},  // \pdf Datei.pdf = einbinden (alt); \pdf Name = Dokument (wird unten zu docpdf)
       {"pdfgen", "pdfgen", true, false},
       {"doc", "doc", true, false},  {"html", "html", true, false},
+      {"docpdf", "doc", true, false},   // \pdf Name  (siehe oben)
       {"mail", "mail", true, false},
       {"attach", "attach", false, false},
     };
+    // \pdf ist doppelt belegt: "\pdf Seite3.pdf" bindet eine bestehende PDF ein
+    // (wie \p), "\pdf Name" (ohne .pdf-Endung) ist das Dokument-Tag
+    // [doc=Name, format=pdf] -- derselbe Baustein wie \pdfgen und \doc.
+    if (word == "pdf" && !closing) {
+      size_t comma = rest.find(',');
+      std::string firstPart = toLower(trim(rest.substr(0, comma)));
+      const bool istDatei = firstPart.size() > 4 && firstPart.compare(firstPart.size() - 4, 4, ".pdf") == 0 && firstPart.find('=') == std::string::npos;
+      if (!istDatei) word = "docpdf";
+      else warnings.push_back("\\pdf " + firstPart + ": binds a PDF file -- the new spelling is \\merge " + firstPart);
+    }
     int hitIdx = -1;
     for (int mi = 0; mi < (int)(sizeof(map) / sizeof(map[0])); ++mi)
       if (word == map[mi].w) { hitIdx = mi; break; }
@@ -362,6 +374,8 @@ std::string translateBackslashTags(const std::string& text,
       warnings.push_back("\\" + word + ": missing value");
       continue;
     }
+    if (word == "docpdf" && toLower(rest).find("format=") == std::string::npos)
+      rest = rest.empty() ? "format=pdf" : rest + ", format=pdf";
     emit(rest.empty() ? "[" + head + "]" : "[" + head + ", " + rest + "]");
   }
   if (!text.empty() && text.back() == '\n') out += "\n";

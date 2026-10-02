@@ -198,11 +198,11 @@ bracket form.
 | `\m left=2*cm` | `[margins, ...]` |
 | `\h`…`\\h`, `\b`…`\\b` | header / bottom blocks |
 | `\e Quelle.txt, newpage` | `[embed=Quelle.txt, newpage]` |
-| `\p Site3.pdf, newpage_no_blank` | `[pdf=Site3.pdf, ...]` |
+| `\merge Site3.pdf, newpage_no_blank` / `\p …` | `[pdf=Site3.pdf, ...]` -- pages of an existing PDF (`\pdf X.pdf` still works, with a hint) |
 | `\pdfgen Quelle.txt, file=X.pdf` | `[pdfgen=Quelle.txt, file=X.pdf]` |
 | `\mail Name, to=…` / `\attach mail=…, file=…` | `[mail=Name, …]` / `[attach, …]` |
 | `\doc Name, format=pdf,html` | `[doc=Name, format=pdf,html]` -- same block as PDF and/or HTML |
-| `\html Name` | `[html=Name]` = `[doc=Name, format=html]` |
+| `\pdf Name` / `\html Name` | `[doc=Name]` / `[html=Name]` -- short for format=pdf / format=html |
 | `\c embedded` … `\\c` | conditional block: the lines in between render only when the condition holds (`embedded` / `!embedded`, nestable). `condition=` stays available on every tag. |
 | `\off` / `\on` | parsing off/on — see *verbatim mode* below |
 | `\loop` / `\file` | repeat over data files — see below |
@@ -333,8 +333,10 @@ because it is resolved before the format is chosen.
 ```
 \doc  Angebot, format=html        Angebot.html
 \doc  Angebot, format=pdf,html    Angebot.pdf AND Angebot.html from one block
+\pdf  Angebot                     short for format=pdf
 \html Angebot                     short for format=html
-\pdfgen Quelle.txt, file=X.pdf    unchanged (format=pdf)
+\pdfgen Quelle.txt, file=X.pdf    unchanged (alias; source file + format=pdf)
+\merge Seiten.pdf                 pages of an existing PDF (was \pdf Seiten.pdf -- still accepted)
 ```
 
 `\doc Name` with a bare name renders the inline content that follows; a
