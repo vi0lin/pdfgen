@@ -180,13 +180,43 @@ mail_dispatch     provider profiles, transport resolution -> gmail_send.c
 pdfgen_host       logging/file/path seam between library and host program
 ```
 
-## Backslash line-tag syntax
+## The two notations: backslash and bracket
 
-Every whole-line `[tag, params]` also exists as `\<letter-or-word>` at the
-start of a line; parameters stay comma-separated, and a first parameter
-without `=` is the tag's value. Old bracket tags keep working; inline tags
-inside a text line (`[date...]`, `[datei.txt]`, images in cells) keep their
-bracket form.
+EVERY element exists in BOTH notations, long and short names alike: the
+backslash form `\tag params` (block tags close with `\\tag`) and the
+whole-line bracket form `[tag params]` … `[/tag]`. They are interchangeable
+line by line; parameters stay comma-separated, and a first parameter
+without `=` is the tag's value. The bracket form is also the INLINE
+notation — `[date...]`, `[bild.png, ...]`, `[datei.txt]`-includes inside a
+text line or table cell, plus `[pages]`/`[document]` in headers — and the
+classic spellings `[tag=wert, ...]` keep working unchanged.
+
+| Element | Backslash (lang / kurz) | Klammerform |
+|---|---|---|
+| Bild | `\image foto.png, width=3*cm` / `\i`, `\bild` | `[image foto.png, ...]` / `[i ...]`; inline `[foto.png, ...]` |
+| Tabelle (Block) | `\table` … `\\table` / `\t` … `\\t`, `\tabelle` | `[table grid=on]` … `[/table]` / `[t ...]` … `[/t]` |
+| Tabellenzeile | `\row spacing=4*mm` / `\r` | `[row ...]` / `[r ...]` |
+| Vertikalabstand | `\s 3` bzw. `\s 5*mm` | `[s 3]` |
+| Gruppe | `\g` … `\\g`, Trenner `@` | `[g]` … `[/g]` |
+| Seitenwechsel | `\newpage no_blank` / `\n` | `[newpage ...]` / `[n]` |
+| Ränder | `\margins left=2*cm` / `\m` | `[margins ...]` / `[m ...]` |
+| Kopf/Fuß | `\header` … `\\header` / `\h` … `\\h`; `\bottom`/`\b` | `[header]` … `[/header]` / `[h]` … `[/h]`; `[bottom]`/`[b]` |
+| Einbetten | `\embed quelle.txt, newpage` / `\e` | `[embed quelle.txt, ...]` / `[e ...]` |
+| PDF einfügen | `\merge extern.pdf` / `\p` | `[merge extern.pdf]` / `[p ...]` |
+| Dokumente | `\pdfgen quelle.txt, file=X.pdf`, `\doc`, `\html` | `[pdfgen ...]`, `[doc ...]`, `[html ...]` |
+| Mail | `\mail Name, to=…` … `\\mail`; `\attach mail=…, file=…` | `[mail Name, ...]` … `[/mail]`; `[attach ...]` |
+| Bedingung | `\c embedded` … `\\c` (auch `\c $var=wert`) | `[c ...]` … `[/c]` |
+| Parsing an/aus | `\off`, `\on`, `\on!`/`\off!` | `[off]`, `[on]`, `[on!]`/`[off!]` |
+| Datensatz-Schleife | `\loop daten.txt, D=\n\n` … `\\loop` | `[loop daten.txt, ...]` … `[/loop]` |
+| Datei lesen | `\file` … `\\file` / NEU: `\read` … `\\read` | `[file ...]`/`[read ...]` … `[/file]`/`[/read]` |
+| Merge-Schleifen | `\mloop`, `\jloop`, `\jload`, `\jread` | `[mloop ...]`, `[jloop ...]` … `[/jloop]`, `[jload ...]`, `[jread ...]` |
+| Virtuelle Datei | `\virtual name` … `\\virtual`; Aliasse `\json`, `\txt`, `\text`, `\data`, `\list`, `\nb` | `[virtual name]` … `[/virtual]` (Aliasse ebenso) |
+| Textbaustein | `\segment Name` (… `\\segment`) | `[segment Name]` (… `[/segment]`) |
+| Dynamische Datei | `\render name` … `\\render`; Aliasse `\dynamic`, `\dynamicfile`, `\d` | `[render name]` … `[/render]` (Aliasse ebenso) |
+| Literal-Klammern | `\[` `\]` | — |
+
+Ohne eigene Backslash-Form (reine Inline-Platzhalter): `[date, ...]`,
+`[pages]`, `[document]`, Datei-Includes `[name.txt]`/`[name.md]`.
 
 | new | equals |
 | --- | --- |
@@ -235,7 +265,8 @@ own record). Within a record the LINES are the fields. Multi-line values
 drop naturally into block-table cells and full-width rows; `@` inside the
 body gives one keep-together group per record. Data files are read verbatim.
 
-**`\file` and the range syntax:** `\file datei.txt(, D=...)` … `\\file` is
+**`\file` and the range syntax:** `\file datei.txt(, D=...)` … `\\file`
+(alias: `\read` … `\\read`) is
 `\loop` without iteration — one pass, the fields are ALL lines of the file
 (global numbering). Both tags share one placeholder grammar
 `:START(:END)?` driven by a cursor that sits after the last delivered line:
@@ -565,6 +596,64 @@ $sig
 Quote file names that contain variables with spaces (`file="…$heading…"`),
 since `to=`/`attachment=` lists split on spaces outside quotes. `\\mail`
 ends a mail body explicitly (otherwise the next tag does).
+
+**Dynamic virtual files (`\render`)** — `\render name.txt` … `\\render`
+(aliases `\dynamic`, `\dynamicfile`, `\d`) is a virtual file whose content
+first runs through the FULL text pipeline (variables, `\jloop`/`\jread`,
+`\loop`/`\file`, segments); the RESULT is what gets registered. Build a
+JSON list from a plain text file at runtime, then feed it on — the output
+can itself be data or source:
+
+```
+\render kunden.json
+[
+\loop emaildaten.txt, D=\n\n
+{"email": ":0", "name": ":1"},
+\\loop
+{"email": "ende@x.de", "name": "Schluss"}
+]
+\\render
+\jloop kunden.json
+…
+\\jloop
+```
+
+**`\e` with data parameters** — every unknown `Name=Wert` option on
+`\e`/`\embed` hands the child a variable: if a (virtual or disk) file of
+that name exists, the variable carries its CONTENT, otherwise the literal
+value. The child runs through the merge pipeline with those variables
+bound, so `$Kundendaten::0:` ranges, `\jloop $Kundendaten` and
+`\jread k $Kundendaten` all work inside it:
+
+```
+\e schablone.txt, Kundendaten=dynamic.json, AndereDaten=test.txt, Empfaenger=chef@x.de
+```
+
+Project tags defined in such a child — `\mail` … `\\mail` blocks,
+`\attach` lines, single-line `\pdfgen`/`\doc`/`\html` tags WITH a source
+file — are HOISTED to the top level, so they appear in `--show`, are
+selectable with `--gen mail.Name`, and send like any other mail. Close
+child mails with `\\mail` (without it the mail body runs to the child's
+end, with a warning). The rest of the child stays ordinary embedded
+content (`embedded` condition, margins handling as usual).
+
+**`\jread Name quelle.json`** — loads a JSON file (or `$variable` holding
+JSON text) and binds it as `$Name` without looping: `$Name.vorname`,
+`$Name.posten[0].preis`. An array root binds its FIRST record; for all
+records use `\jloop`. One mail per address from a plain list:
+
+```
+\list EmailListe
+a@x.de
+b@y.de
+\\list
+\mloop EmailListe, D=\n
+\mail An:0, to=:0
+Betreff
+Hallo!
+\\mail
+\\mloop
+```
 
 **Ranges on variable values** — every `$name` whose value has several lines
 (a JSON string with line breaks, a `\segment`) takes the record/range

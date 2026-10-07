@@ -135,7 +135,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_MARKUP_API 19
+#define PDFGEN_MARKUP_API 20
 #include <functional>
 #include <string>
 #include <vector>
@@ -196,6 +196,16 @@ std::string preprocessSource(const std::string& text, bool embedded,
 // mdLineSemantics = true for .md sources (soft line wrapping).
 std::string translateMarkdown(const std::string& text, bool mdLineSemantics,
                               std::vector<std::string>& warnings);
+
+// BRACKET NOTATION: every backslash tag has the equivalent whole-line
+// bracket form -- [tag params] == \tag params and [/tag] == \\tag, long
+// and short names alike ([jloop kunden.json]...[/jloop], [t grid=on]...
+// [/t], [segment Gruss], [off], ...). This pass normalizes those lines to
+// the backslash form; it runs first (merge stage and preprocess), skips
+// \x03 verbatim lines and ``` fences, and leaves the classic inline
+// bracket tags ([date...], [bild.png...], [datei.txt], [pages],
+// [document], [tag=wert]) untouched.
+std::string translateBracketTags(const std::string& text);
 
 // VIRTUAL FILES: \virtual name.ext ... \\virtual (extracted at project
 // stage) registers the lines between the tags under `name` -- every reader

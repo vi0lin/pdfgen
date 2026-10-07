@@ -19,7 +19,7 @@
 // ---- release consistency check ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_MARKUP_API != 19
+#elif PDFGEN_MARKUP_API != 20
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
@@ -249,7 +249,7 @@ std::string expandEmbeds(const std::string& text, const std::string& baseDir,
       warnings.push_back("[embed] needs a source: [embed=Quelle.txt]");
       continue;
     }
-    std::string child = readFile(baseDir + "/" + src);
+    std::string child = markup::readDataFile(baseDir, src);
     if (child.empty()) {
       warnings.push_back("[embed]: cannot read " + src);
       continue;
@@ -321,6 +321,7 @@ struct MergeCtx {
   std::map<std::string, std::vector<std::string>> segments;  // \segment
   std::set<std::string> segExpanding;        // Zyklus-Schutz
   std::map<std::string, long> varRecPtr;     // $name:#:: Paket-Zeiger
+  int embedSeq = 0;                          // \e-Datenparams: Zaehler
 
   const Value* lookup(const std::string& path, long* idx = nullptr) const {
     for (size_t i = frames.size(); i-- > 0;) {
@@ -648,7 +649,8 @@ std::string expandMergeJson(const std::vector<std::string>& lines,
     // ---- \virtual name ... \\virtual: inline-Datei registrieren ----
     // (Aliasse: \json, \txt, \text, \data -- gleiche Bedeutung)
     std::string vword;
-    for (const char* w : { "virtual", "json", "txt", "text", "data" }) {
+    for (const char* w : { "virtual", "json", "txt", "text", "data",
+                           "list", "nb" }) {
       size_t wl = std::strlen(w);
       if (low.size() > wl && low[0] == '\\' &&
           low.compare(1, wl, w) == 0 &&
@@ -686,6 +688,226 @@ std::string expandMergeJson(const std::vector<std::string>& lines,
         markup::setVirtualFile(name, content);
       }
       li = end;                                     // Block verschwindet
+      continue;
+    }
+
+    // ---- \e quelle.txt, Name=datei, ...: Embed mit DATEN-PARAMETERN ----
+    // Jeder unbekannte Name=Wert wird als Variable an das Kind gereicht:
+    // existiert eine (virtuelle) Datei dieses Namens, ist der Wert deren
+    // INHALT, sonst der Wert selbst. Das Kind laeuft hier durch den Walker
+    // ($Name, Ranges, \jloop/\jread), seine Projekt-Tags (\mail...\\mail,
+    // \attach, einzeilige \pdfgen/\doc/\html mit Quelle) werden auf die
+    // HAUPTEBENE gehoben (-> Feedback/--gen), der Rest geht als virtuelle
+    // Datei in den normalen \e-Pfad (embedded-Condition, Raender).
+    if ((low.rfind("\\e", 0) == 0 &&
+         (t.size() == 2 || t[2] == ' ' || t[2] == ',')) ||
+        (low.rfind("\\embed", 0) == 0 &&
+         (t.size() == 6 || t[6] == ' ' || t[6] == ','))) {
+      size_t hl = low[2] == 'm' || (low.size() > 2 && low[1] == 'e' &&
+                                    low[2] == 'm') ? 6 : 2;
+      hl = low.rfind("\\embed", 0) == 0 ? 6 : 2;
+      std::string rest = trim(t.substr(hl));
+      if (!rest.empty() && rest[0] == ',') rest = trim(rest.substr(1));
+      std::vector<std::string> parts;
+      {
+        std::stringstream ps(rest);
+        std::string part;
+        while (std::getline(ps, part, ',')) parts.push_back(trim(part));
+      }
+      auto knownOpt = [](const std::string& kl) {
+        return kl == "newpage" || kl == "neueseite" ||
+               kl == "newpage_no_blank" || kl == "newpage_noblank" ||
+               kl == "neueseite_keine_leerseite" || kl == "keepmargins" ||
+               kl == "raenderbehalten" || kl.rfind("condition=", 0) == 0 ||
+               kl.rfind("bedingung=", 0) == 0;
+      };
+      std::vector<std::pair<std::string, std::string>> dataParams;
+      std::vector<std::string> keepOpts;
+      std::string src = parts.empty() ? "" : parts[0];
+      for (size_t pi = 1; pi < parts.size(); ++pi) {
+        std::string kl = toLower(parts[pi]);
+        size_t eq = parts[pi].find('=');
+        if (knownOpt(kl) || eq == std::string::npos) {
+          keepOpts.push_back(parts[pi]);
+          continue;
+        }
+        dataParams.push_back({trim(parts[pi].substr(0, eq)),
+                              trim(parts[pi].substr(eq + 1))});
+      }
+      if (dataParams.empty()) {                    // klassisches \e
+        emit(mergeSubst(lines[li], ctx));
+        continue;
+      }
+      src = trim(mergeSubst(src, ctx));
+      std::string childRaw = markup::readDataFile(baseDir, src);
+      if (childRaw.empty()) {
+        warnings.push_back("\\e " + src + ": Quelle nicht lesbar");
+        continue;
+      }
+      auto savedV = ctx.vars;
+      for (auto& dp : dataParams) {
+        std::string val = trim(mergeSubst(dp.second, ctx));
+        std::string content = markup::readDataFile(baseDir, val);
+        ctx.vars[dp.first] = content.empty() ? val : content;
+      }
+      std::vector<std::string> cl;
+      {
+        std::stringstream cs(markup::translateBracketTags(childRaw));
+        std::string l;
+        while (std::getline(cs, l)) {
+          if (!l.empty() && l.back() == '\r') l.pop_back();
+          cl.push_back(l);
+        }
+      }
+      std::string childOut =
+          expandMergeJson(cl, 0, cl.size(), ctx, baseDir, warnings);
+      ctx.vars = savedV;
+      // Projekt-Tags heben
+      std::vector<std::string> ol;
+      {
+        std::stringstream os(childOut);
+        std::string l;
+        while (std::getline(os, l)) ol.push_back(l);
+      }
+      std::string rest2;
+      for (size_t j = 0; j < ol.size(); ++j) {
+        std::string jt = trim(ol[j]);
+        std::string jl = toLower(jt);
+        bool mailTag = (jl.rfind("\\mail", 0) == 0 &&
+                        (jt.size() == 5 || jt[5] == ' ' || jt[5] == ',')) ||
+                       jl.rfind("[mail", 0) == 0;
+        bool attachTag = (jl.rfind("\\attach", 0) == 0) ||
+                         jl.rfind("[attach", 0) == 0;
+        if (mailTag) {
+          size_t me = j;
+          bool found = false;
+          for (size_t k = j; k < ol.size(); ++k) {
+            std::string kl = toLower(trim(ol[k]));
+            if (kl == "\\\\mail" || kl == "[/mail]") { me = k; found = true; break; }
+          }
+          if (!found) {
+            warnings.push_back("\\e " + src + ": \\mail im Kind ohne "
+                               "\\\\mail -- Mail bis Dateiende gehoben");
+            me = ol.size() - 1;
+          }
+          for (size_t k = j; k <= me; ++k) emit(ol[k]);
+          j = me;
+          continue;
+        }
+        if (attachTag) { emit(ol[j]); continue; }
+        bool docTag = false;
+        for (const char* w : { "\\pdfgen", "\\doc", "\\html" }) {
+          size_t wl = std::strlen(w);
+          if (jl.rfind(w, 0) == 0 &&
+              (jt.size() == wl || jt[wl] == ' ' || jt[wl] == ',')) {
+            // nur einzeilig MIT Quelldatei heben
+            std::string arg = trim(jt.substr(wl));
+            if (!arg.empty() && arg[0] == ',') arg = trim(arg.substr(1));
+            size_t ce = arg.find(',');
+            std::string first = toLower(trim(ce == std::string::npos ?
+                                             arg : arg.substr(0, ce)));
+            if (first.size() > 4 &&
+                (first.compare(first.size() - 4, 4, ".txt") == 0 ||
+                 first.compare(first.size() - 3, 3, ".md") == 0)) {
+              docTag = true;
+            }
+            break;
+          }
+        }
+        if (docTag) { emit(ol[j]); continue; }
+        rest2 += ol[j];
+        rest2 += '\n';
+      }
+      std::string vname = "__embed" + std::to_string(++ctx.embedSeq) + "_" +
+                          src;
+      for (auto& c : vname) if (c == '/' || c == '\\') c = '_';
+      markup::setVirtualFile(vname, rest2);
+      std::string eline = "\\e " + vname;
+      for (const auto& o : keepOpts) eline += ", " + o;
+      emit(eline);
+      continue;
+    }
+
+    // ---- \render name.txt ... \\render: DYNAMISCHE virtuelle Datei ----
+    // (Aliasse: \dynamic, \dynamicfile, \d) Der Inhalt laeuft erst durch
+    // die komplette Text-Pipeline (Variablen, \jloop/\jread, \loop/\file,
+    // Segmente); das RESULTAT wird als virtuelle Datei registriert und
+    // kann als Daten ODER als Source (\e) weitergereicht werden.
+    std::string dword;
+    for (const char* w : { "render", "dynamicfile", "dynamic", "d" }) {
+      size_t wl = std::strlen(w);
+      if (low.size() > wl && low[0] == '\\' && low.compare(1, wl, w) == 0 &&
+          (low.size() == wl + 1 || low[wl + 1] == ' ' || low[wl + 1] == '\t')) {
+        dword = w;
+        break;
+      }
+    }
+    if (!dword.empty()) {
+      std::string name = trim(mergeSubst(trim(t.substr(dword.size() + 1)), ctx));
+      const std::string openT = "\\" + dword, closeT = "\\\\" + dword;
+      size_t end = li + 1;
+      bool closedD = false;
+      int dd = 1;
+      for (; end < to; ++end) {
+        std::string et = toLower(trim(lines[end]));
+        if (et.rfind(openT, 0) == 0 && et.rfind(closeT, 0) != 0) ++dd;
+        else if ((et == closeT || et == "\\\\render" || et == "\\\\dynamic") &&
+                 --dd == 0) { closedD = true; break; }
+      }
+      if (!closedD) {
+        warnings.push_back("\\" + dword + " " + name + ": Schliesser fehlt");
+        break;
+      }
+      if (name.empty()) {
+        warnings.push_back("\\" + dword + " braucht einen Dateinamen");
+      } else {
+        std::vector<std::string> body(lines.begin() + (long)li + 1,
+                                      lines.begin() + (long)end);
+        std::string rendered =
+            expandMergeJson(body, 0, body.size(), ctx, baseDir, warnings);
+        rendered = markup::expandLoops(rendered, baseDir, warnings);
+        while (!rendered.empty() && rendered.back() == '\n')
+          rendered.pop_back();
+        markup::setVirtualFile(name, rendered);
+      }
+      li = end;
+      continue;
+    }
+
+    // ---- \jread Name quelle.json: JSON laden und als $Name binden ----
+    if (low.rfind("\\jread", 0) == 0 &&
+        (t.size() == 6 || t[6] == ' ' || t[6] == '\t' || t[6] == ',')) {
+      std::string rest = trim(t.substr(6));
+      std::string asName, src;
+      {
+        size_t sp = rest.find_first_of(" \t");
+        if (sp == std::string::npos) { src = rest; asName = "j"; }
+        else { asName = trim(rest.substr(0, sp)); src = trim(rest.substr(sp + 1)); }
+      }
+      src = trim(mergeSubst(src, ctx));
+      static const Value kNullJ;
+      const Value* root = nullptr;
+      if (!src.empty() && src[0] == '$') {
+        root = ctx.lookup(src.substr(1));
+        if (!root) {
+          auto vi = ctx.vars.find(src.substr(1));   // Variableninhalt = JSON
+          if (vi != ctx.vars.end()) {
+            std::string err;
+            Value v = Value::parse(vi->second, err);
+            if (err.empty()) {
+              ctx.files.emplace("$var:" + src, std::move(v));
+              root = &ctx.files["$var:" + src];
+            } else warnings.push_back("\\jread " + src + ": " + err);
+          }
+        }
+      } else {
+        root = mergeLoadJson(ctx, baseDir, src, warnings);
+      }
+      // Array-Wurzel: den ERSTEN Datensatz binden ($j.vorname); fuer alle
+      // Datensaetze gibt es \jloop. Objekt-Wurzel: direkt binden.
+      if (root && root->kind() == Value::Kind::Array && root->size() > 0)
+        root = &root->index(0);
+      ctx.frames.push_back({asName, root ? root : &kNullJ, 0});
       continue;
     }
 
@@ -868,6 +1090,21 @@ std::string expandMergeJson(const std::vector<std::string>& lines,
       const Value* arr = nullptr;
       if (!src.empty() && src[0] == '$') {
         arr = ctx.lookup(src.substr(1));
+        if (!arr) {                                // Variableninhalt = JSON
+          auto vi = ctx.vars.find(src.substr(1));
+          if (vi != ctx.vars.end()) {
+            auto fi = ctx.files.find("$var:" + src);
+            if (fi == ctx.files.end()) {
+              std::string err;
+              Value v = Value::parse(vi->second, err);
+              if (!err.empty())
+                warnings.push_back("\\jloop " + src + ": " + err);
+              else
+                fi = ctx.files.emplace("$var:" + src, std::move(v)).first;
+            }
+            if (fi != ctx.files.end()) arr = &fi->second;
+          }
+        }
         if (!arr)
           warnings.push_back("\\jloop " + src + ": unbekannter Pfad");
       } else {
@@ -906,7 +1143,7 @@ std::string expandMergeJson(const std::vector<std::string>& lines,
 
 std::string expandMailMerge(const std::string& text, const std::string& baseDir,
                             std::vector<std::string>& warnings) {
-  std::string t = text;
+  std::string t = markup::translateBracketTags(text);
   if (t.find("\\mloop") != std::string::npos)
     t = markup::expandMergeTextLoops(t, baseDir, warnings);
   if (t.find("\\jloop") == std::string::npos &&
@@ -1019,7 +1256,9 @@ Project parseProject(const std::string& text, const std::string& baseDir,
           continue;
         }
         if (tag.kind == "mail") {
-          curDoc = nullptr;
+          // curDoc bleibt stehen: der Mail-Koerper laeuft ueber curMail,
+          // nach [/mail] gehoert der Inhalt wieder zum selben Dokument
+          // (sonst entstuenden zwei implizite Dokumente gleichen Namens).
           MailSpec m;
           m.name = tag.headValue;
           m.baseDir = baseDir;

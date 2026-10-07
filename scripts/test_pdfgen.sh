@@ -98,6 +98,23 @@ if command -v pdftotext >/dev/null 2>&1 && [ -s "$TMP/g/Bewerbung.pdf" ]; then
     && ok "\\segment + \$-Ranges + \$-Bedingungen" || bad "\\segment/Ranges"
 fi
 
+# ---- 2e) Klammer-Notation + \render + \e-Datenparameter --------------------
+mkdir -p "$TMP/k"
+{
+  printf '[render liste.json]\n[\n[loop m.txt, D=\\n]\n{"n": ":0"},\n[/loop]\n{"n": "Z"}\n]\n[/render]\n\n'
+  printf '[virtual kind.txt]\nWert: $W\n[jloop $Daten]\nJ: $n\n[/jloop]\n[mail KM, to=x@y.z]\nBetreff K\nBody K\n[/mail]\n[/virtual]\n\n'
+  printf '[e kind.txt, Daten=liste.json, W=42]\n\n'
+  printf '[t grid=on]\n| [off] |\n[/t]\n'
+} > "$TMP/k/text.txt"
+printf 'A\nB\n' > "$TMP/k/m.txt"
+OUT=$("$BIN" "$TMP/k" --show 2>/dev/null)
+echo "$OUT" | grep -q "mail.KM" && ok "Klammer-Notation + \\render + \\e-Params (Mail gehoben)" || bad "Klammer/render/e-Params"
+"$BIN" "$TMP/k" >/dev/null 2>&1
+if command -v pdftotext >/dev/null 2>&1 && [ -s "$TMP/k/Bewerbung.pdf" ]; then
+  T=$(pdftotext "$TMP/k/Bewerbung.pdf" - 2>/dev/null)
+  echo "$T" | grep -q "Wert: 42" && echo "$T" | grep -q "J: A" && echo "$T" | grep -q "J: Z"     && ok "\\e-Variablen + jloop ueber \$Variable" || bad "\\e-Variablen"
+fi
+
 # ---- 3) Mail-Konten-Aufloesung (sendet nichts) ------------------------------
 printf '[gmx]\nich@gmx.de\ntoken\n' > "$TMP/m.conf"
 "$BIN" -c "$TMP/m.conf" --mail-accounts 2>/dev/null | grep -q "mail.gmx.net:587" \

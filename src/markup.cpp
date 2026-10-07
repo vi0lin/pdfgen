@@ -22,7 +22,7 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: it lacks PDFGEN_MARKUP_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_MARKUP_API != 19
+#elif PDFGEN_MARKUP_API != 20
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
@@ -38,6 +38,7 @@
 
 
 namespace markup {
+
 
 // ---- virtual files ----------------------------------------------------------
 namespace {
@@ -415,6 +416,63 @@ std::string translateBackslashTags(const std::string& text,
 // \[ and \] produce literal brackets: swapped to sentinel bytes here so no
 // pipeline stage (includes, dates, tokenizer, cells) can mistake them for a
 // tag, and swapped back just before the text reaches a paragraph.
+// ---- bracket notation -> backslash notation (whole-line tags) ---------------
+std::string translateBracketTags(const std::string& text) {
+  static const char* kWords[] = {
+    "t", "table", "tabelle", "r", "row", "n", "newpage", "neueseite",
+    "m", "margins", "h", "header", "b", "bottom", "e", "embed", "p",
+    "merge", "pdfgen", "doc", "html", "mail", "attach", "g", "s", "c",
+    "on", "off", "on!", "off!", "loop", "file", "read", "mloop", "jloop",
+    "jload", "jread", "virtual", "json", "txt", "text", "data", "list",
+    "segment", "dynamic", "dynamicfile", "render", "d", "i", "image",
+    "bild", "nb",
+  };
+  auto known = [&](const std::string& w) {
+    for (const char* k : kWords)
+      if (w == k) return true;
+    return false;
+  };
+  std::vector<std::string> lines;
+  {
+    std::stringstream ss(text);
+    std::string l;
+    while (std::getline(ss, l)) lines.push_back(l);
+  }
+  std::string out;
+  bool fence = false;
+  for (auto& raw : lines) {
+    std::string t = trim(raw);
+    if (!t.empty() && t[0] == '\x03') { out += raw; out += '\n'; continue; }
+    if (t.rfind("```", 0) == 0) { fence = !fence; out += raw; out += '\n'; continue; }
+    if (fence || t.size() < 3 || t.front() != '[' || t.back() != ']') {
+      out += raw; out += '\n';
+      continue;
+    }
+    std::string inner = trim(t.substr(1, t.size() - 2));
+    if (!inner.empty() && inner[0] == '/') {           // [/tag] -> \\tag
+      std::string w = toLower(trim(inner.substr(1)));
+      if (known(w)) { out += "\\\\" + w; out += '\n'; continue; }
+      out += raw; out += '\n';
+      continue;
+    }
+    // first word up to space; forms with '=' directly after the word
+    // ([mail=X]) are the CLASSIC tags and stay untouched
+    size_t sp = inner.find_first_of(" \t");
+    std::string w = toLower(sp == std::string::npos ? inner : inner.substr(0, sp));
+    if (!known(w) || w.find('=') != std::string::npos) {
+      out += raw; out += '\n';
+      continue;
+    }
+    std::string rest = sp == std::string::npos ? "" : trim(inner.substr(sp + 1));
+    out += "\\" + w;
+    if (!rest.empty()) { out += ' '; out += rest; }
+    out += '\n';
+  }
+  if (!text.empty() && text.back() != '\n' && !out.empty()) out.pop_back();
+  return out;
+}
+
+
 // ---- \on / \off: verbatim mode ---------------------------------------------------
 // Runs before every other stage. Literal lines get a \x03 prefix plus
 // [ ] -> \x01/\x02 so no later stage interprets them; the tokenizer strips
@@ -450,13 +508,13 @@ int blockStart(const std::string& low) {          // 1 table, 2 loop, 3 file
   };
   if (word("\\t") || word("\\table") || word("\\tabelle")) return 1;
   if (word("\\loop")) return 2;
-  if (word("\\file")) return 3;
+  if (word("\\file") || word("\\read")) return 3;
   return 0;
 }
 int blockEnd(const std::string& low) {
   if (low == "\\\\t" || low == "\\\\table" || low == "\\\\tabelle") return 1;
   if (low == "\\\\loop") return 2;
-  if (low == "\\\\file") return 3;
+  if (low == "\\\\file" || low == "\\\\read") return 3;
   return 0;
 }
 
@@ -1039,10 +1097,20 @@ std::string applyStyles(const std::string& text,
               looksLikeImageHead(head))
             kind = "image";
         }
-        ParamList eff = resolveStyledParams(kind, parts, st, warnings);
-        emit("[" + joinStyled(head, eff) + "]");
-        li = consumedTo;
-        continue;
+        // Nur PLAUSIBLE Tag-Koepfe stylen/neu aufbauen -- eine Zeile wie
+        // [{"A": "B"}, ...] ist Text (z.B. JSON) und bliebe sonst nicht
+        // byte-identisch (Parameter-Normalisierung lowerte sie).
+        bool plausible = !kind.empty();
+        for (char pc : kind)
+          if (!(std::isalnum((unsigned char)pc) || pc == '_' || pc == '.' ||
+                pc == '-' || pc == '!' || pc == '/'))
+            { plausible = false; break; }
+        if (plausible) {
+          ParamList eff = resolveStyledParams(kind, parts, st, warnings);
+          emit("[" + joinStyled(head, eff) + "]");
+          li = consumedTo;
+          continue;
+        }
       }
     }
     emit(lines[li]);
@@ -1056,7 +1124,8 @@ std::string preprocessSource(const std::string& text, bool embedded,
                              bool mdLineSemantics) {
   std::stringstream ss(applyStyles(
       escapeLiteralBrackets(translateBackslashTags(
-          translateMarkdown(processOnOff(text, warnings), mdLineSemantics,
+          translateMarkdown(processOnOff(translateBracketTags(text),
+                                         warnings), mdLineSemantics,
                             warnings), warnings)), warnings));
   std::string line, out;
   bool skipTableRows = false;
@@ -1282,7 +1351,12 @@ std::string substFields(const std::string& line, FieldCtx& ctx,
     // Tag-Zeilen auch nach '=', ',' und '-', damit to=:1 und Rund-:0 in
     // einer \mail-Schablone funktionieren (Uhrzeiten wie 12:30 stehen nie
     // direkt hinter diesen Zeichen).
-    bool boundary = prev == ' ' || prev == '\t' || prev == '|' || prev == '=' || prev == ',' || prev == '-';
+    bool boundary = prev == ' ' || prev == '\t' || prev == '|' ||
+                    prev == '=' || prev == ',' || prev == '-' ||
+                    prev == '"' || prev == '\'' || prev == '(' ||
+                    prev == '[' || prev == '{' || prev == '>';
+    // ("..." etc.: Platzhalter in JSON-/Klammer-Schablonen -- Uhrzeiten wie
+    //  12:30 stehen nie direkt hinter diesen Zeichen)
 
     // record addressing: $#N:a:b / $#:a:b / $:a:b / $##... (parent loop)
     if (line[i] == '$' && boundary && ctx.recs && i + 1 < line.size() &&
@@ -1504,11 +1578,18 @@ static std::string expandLoopsImpl(const std::string& text,
       if (!isMerge) { emit(lines[li]); continue; }
     } else {
       isLoop = tagAt("\\loop");
-      isFile = tagAt("\\file");
+      isFile = tagAt("\\file") || tagAt("\\read");
       if (!isLoop && !isFile) { emit(lines[li]); continue; }
     }
-    const char* tagName = isMerge ? "mloop" : isFile ? "file" : "loop";
+    bool isRead = false;
+    if (isFile) {
+      std::string lw = toLower(trim(t));
+      isRead = lw.rfind("\\read", 0) == 0;
+    }
+    const char* tagName = isMerge ? "mloop" : isRead ? "read"
+                        : isFile ? "file" : "loop";
     const std::string closeTag = isMerge ? "\\\\mloop"
+                               : isRead  ? "\\\\read"
                                : isFile  ? "\\\\file" : "\\\\loop";
 
     // parse "\loop file[, D=...]"  /  "\file file[, D=...]"
@@ -1541,10 +1622,11 @@ static std::string expandLoopsImpl(const std::string& text,
       for (size_t j = bodyStart; j < lines.size(); ++j) {
         std::string jt = toLower(trim(lines[j]));
         bool opens = (jt.rfind("\\loop", 0) == 0 && jt.rfind("\\\\loop", 0) != 0) ||
-                     (jt.rfind("\\file", 0) == 0 && jt.rfind("\\\\file", 0) != 0);
+                     (jt.rfind("\\file", 0) == 0 && jt.rfind("\\\\file", 0) != 0) ||
+                     (jt.rfind("\\read", 0) == 0 && jt.rfind("\\\\read", 0) != 0);
         if (opens && (trim(lines[j]).size() == 5 || jt[5] == ' ' ||
                       jt[5] == ',' || jt[5] == '\t')) { ++d; continue; }
-        if (jt == "\\\\loop" || jt == "\\\\file") {
+        if (jt == "\\\\loop" || jt == "\\\\file" || jt == "\\\\read") {
           if (d > 0 && jt != closeTag) { --d; continue; }
           if (d > 0) { --d; continue; }
           if (jt == closeTag) { bodyEnd = j; closed = true; break; }
@@ -1601,11 +1683,13 @@ static std::string expandLoopsImpl(const std::string& text,
         int d = 0;
         for (size_t j = bodyStart; j < bodyEnd; ++j) {
           std::string jt = toLower(trim(lines[j]));
-          bool opens = (jt.rfind("\\loop", 0) == 0 || jt.rfind("\\file", 0) == 0) &&
+          bool opens = (jt.rfind("\\loop", 0) == 0 || jt.rfind("\\file", 0) == 0 ||
+                        jt.rfind("\\read", 0) == 0) &&
                        jt.rfind("\\\\", 0) != 0 &&
                        (trim(lines[j]).size() == 5 || jt[5] == ' ' ||
                         jt[5] == ',' || jt[5] == '\t');
-          bool closes = jt == "\\\\loop" || jt == "\\\\file";
+          bool closes = jt == "\\\\loop" || jt == "\\\\file" ||
+                        jt == "\\\\read";
           if (closes && d > 0) --d;
           body += substFields(lines[j], ctx, tagName, warnings, d);
           body += '\n';
@@ -1664,11 +1748,13 @@ static std::string expandLoopsImpl(const std::string& text,
         int d = 0;
         for (size_t j = bodyStart; j < bodyEnd; ++j) {
           std::string jt = toLower(trim(lines[j]));
-          bool opens = (jt.rfind("\\loop", 0) == 0 || jt.rfind("\\file", 0) == 0) &&
+          bool opens = (jt.rfind("\\loop", 0) == 0 || jt.rfind("\\file", 0) == 0 ||
+                        jt.rfind("\\read", 0) == 0) &&
                        jt.rfind("\\\\", 0) != 0 &&
                        (trim(lines[j]).size() == 5 || jt[5] == ' ' ||
                         jt[5] == ',' || jt[5] == '\t');
-          bool closes = jt == "\\\\loop" || jt == "\\\\file";
+          bool closes = jt == "\\\\loop" || jt == "\\\\file" ||
+                        jt == "\\\\read";
           if (closes && d > 0) --d;
           body += substFields(lines[j], ctx, tagName, warnings, d);
           body += '\n';
