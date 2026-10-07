@@ -1,0 +1,156 @@
+\virtual bewerbungs-daten.json
+[
+{
+  "to": "example-email@gmail.com",
+  "empf": "Firmenname GmbH
+Test Str. 276
+21345 Ort",
+  "heading": "Bewerbung als Fachangestellter",
+  "emailbody": "Sehr geehrte Damen und Herren,
+anbei übersende ich Ihnen meine Bewerbungsunterlagen. Ich möchte mich Ihnen als erfahrener Angestellter für den Ihre Unternehmung bewerben.
+
+Über die Gelegenheit zu einem persönlichen Gespräch freue ich mich sehr.",
+  "body": "Sehr geehrte Damen und Herren,
+  
+hiermit bewerbe ich mich für die Ausgeschriebene Stelle.
+
+Ich bin zuverlässig, arbeite sehr eigenverantwortlich und pflege einen zuvorkommenden Umgang mit Kunden und Partnern. Ich stehe ich Ihnen flexibel in Vollzeit oder Teilzeit zur Verfügung.
+
+Über eine Einladung zu einem persönlichen Vorstellungsgespräch freue ich mich sehr."
+}
+]
+\\virtual
+
+\virtual lebenslauf-data.txt
+2026
+Company GmbH, Street With Number, Zip Location
+Test Test Test Test
+
+2026
+Company GmbH, Street With Number, Zip Location
+Das hier ist ein test Text, der die Firma beschreibt.
+Dieser Text soll die Firma und die Tätigkeiten beschreiben.
+
+11/2025
+Company GmbH, Street With Number, Zip Location
+Test Test Test Test
+
+09/2025
+Company GmbH, Street With Number, Zip Location
+Test Test Test Test
+
+09/2025
+Company GmbH, Street With Number, Zip Location
+Das hier ist ein test Text, der die Firma beschreibt.
+Dieser Text soll die Firma und die Tätigkeiten beschreiben.
+\\virtual
+
+\virtual sender.txt
+Vorname Nachname
+Strasse 157
+PLZ ORT
+email_adresse@gmail.de
++49 163 000 00 00
+\\virtual
+
+\segment Adresse
+Straße
+PLZ Ort
+Tel.: +49 163 000 00 00
+E-Mail: email_adresse@gmail.com
+\\segment
+
+\jloop bewerbungs-daten.json
+\pdfgen file=Bewerbung-$empf:0.pdf
+\m top=0cm
+// \h
+// \t widths=1:1, padding=0:0
+// | <b>[document]</b> | Seite [pages] |
+// | :--- | ---: |
+// \\t
+// \\h
+
+\b
+\t widths=1:1, padding=0:0
+|  | [date, format="D. MONTH YYYY", lang=de] |
+| :--- | ---: |
+\\t
+\\b
+
+// Bausteine koennen auch als datei hineingereicht werden>
+\segment Mit_Freundlichen_Grüßen
+Mit freundlichen Grüßen
+Vorname Nachname
+\\segment
+
+\segment Unterschrift
+\i Unterschrift.webp, width=4cm, dy=-5mm, dx=7mm
+\\
+
+\segment Mit_Freundlichen_Grüßen
+\segment Unterschrift
+
+// Bausteine koennen auch als datei hineingereicht werden>
+// \nb EmailList
+// test@test.de
+// test2@test.de
+// \\nb
+
+
+\t widths=3:5, padding=0.0
+| :--- | :--- |
+| [sender - Kopie.txt] | $empf |
+\\t
+
+
+# $heading
+
+
+$body
+// \b Unterschrift
+
+\segment Mit_Freundlichen_Grüßen
+\segment Unterschrift
+\n
+\m top=1.5cm
+\c $embedded
+[sender - Kopie.txt]
+\\c
+
+# Lebenslauf
+
+
+\t, widths=2:8, padding=0*mm:0*mm, spacing=0*cm, indent=0*cm, grid=off
+| :--- | :--- |
+\loop lebenslauf-data - Kopie.txt
+@
+| :0 | :+1 |
+:+1:
+@
+
+\\loop
+\\t
+
+// \b Unterschrift
+\segment Mit_Freundlichen_Grüßen
+\segment Unterschrift
+\mail M:$#, to=$to, cc=cc_email@gmail.com
+$heading - Vorname Nachname
+
+\c $mailbody
+$mailbody
+\\c
+
+\c !$mailbody
+Sehr geehrte Damen und Herren,
+
+anbei erhalten Sie meine Bewerbungsunterlagen für die Stelle als $heading.
+Über die Gelegenheit zu einem persönlichen Gespräch freue ich mich sehr.
+\\c
+
+\segment Mit_Freundlichen_Grüßen
+
+\segment Adresse
+\attach mail=M:$#, file=Bewerbung-$#.pdf
+
+\\jloop

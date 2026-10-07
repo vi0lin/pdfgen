@@ -1,0 +1,94 @@
+\jloop bewerbungs-daten.json
+\pdfgen file=Bewerbung-$#.pdf
+\m top=0cm
+// \h
+// \t widths=1:1, padding=0:0
+// | <b>[document]</b> | Seite [pages] |
+// | :--- | ---: |
+// \\t
+// \\h
+
+\b
+\t widths=1:1, padding=0:0
+|  | [date, format="D. MONTH YYYY", lang=de] |
+| :--- | ---: |
+\\t
+\\b
+
+// Bausteine koennen auch als datei hineingereicht werden>
+// \nb Unterschrift
+// Mit freundlichen Grüßen
+// Vorname Nachname
+// \i Unterschrift.webp, width=4cm, dy=-5mm, dx=7mm
+// \\nb
+
+// Bausteine koennen auch als datei hineingereicht werden>
+// \nb EmailList
+// test@test.de
+// test2@test.de
+// \\nb
+
+
+\t widths=3:5, padding=0.0
+| :--- | :--- |
+| [sender - Kopie.txt] | $empf |
+\\t
+
+
+# $heading
+
+
+$body
+// \b Unterschrift
+
+Mit freundlichen Grüßen
+Vorname Nachname
+\i Unterschrift.webp, width=4cm, dy=-3mm, dx=7mm
+\n
+\m top=1.5cm
+\c $embedded
+[sender - Kopie.txt]
+\\c
+
+# Lebenslauf
+
+
+\t, widths=2:8, padding=0*mm:0*mm, spacing=0*cm, indent=0*cm, grid=off
+| :--- | :--- |
+\loop lebenslauf-data - Kopie.txt
+@
+| :0 | :+1 |
+:+1:
+@
+
+\\loop
+\\t
+
+// \b Unterschrift
+Mit freundlichen Grüßen
+Vorname Nachname
+\i Unterschrift.webp, width=3.3cm, dy=-3mm, dx=7mm
+\mail M:$#, to=$to, cc=cc_email@gmail.com
+$heading - Vorname Nachname
+
+\c $mailbody
+$mailbody
+\\c
+
+\c !$mailbody
+Sehr geehrte Damen und Herren,
+
+anbei erhalten Sie meine Bewerbungsunterlagen für die Stelle als $heading.
+Über die Gelegenheit zu einem persönlichen Gespräch freue ich mich sehr.
+\\c
+
+Mit freundlichen Grüßen
+Vorname Nachname
+
+Adresse Hausnummer
+PLZ Ort
+Tel.: +49 163 000 00 00
+E-Mail: email@gmail.com
+\attach mail=M:$#, file=Bewerbung-$#.pdf
+
+\\jloop

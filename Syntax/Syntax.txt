@@ -1,0 +1,255 @@
+// ============================================================
+//  Syntax.txt — vollständige Syntax-Referenz für pdfgen
+//  Diese Datei ist selbst eine gültige Quelle: jeder Tag wird
+//  erklärt UND direkt live vorgeführt. Rendern mit:
+//      pdfgen Syntax.txt          -> Syntax.pdf
+//  Zeilen wie diese (mit // am Anfang) sind Kommentare und
+//  erscheinen nirgends im PDF.
+// ============================================================
+\h
+\t widths=1:1, padding=0:0
+| <b>[document]</b> | Seite [pages] |
+| :--- | ---: |
+\\t
+\\h
+\b
+\t widths=1:1, padding=0:0
+| pdfgen Syntax-Referenz | [date, format="D. MONTH YYYY", lang=de] |
+| :--- | ---: |
+\\t
+\\b
+# pdfgen — Syntax-Referenz
+
+Dieses Dokument erklärt jeden Tag und führt ihn direkt vor. Kopf- und Fußzeile dieser Seiten stammen aus einem ›\h…\\h‹- und ›\b…\\b‹-Block am Dateianfang — mit \[document\] (Dateiname) und \[pages\] (Seite/Gesamt), die pro Seite ersetzt werden.
+
+## 1. Grundlagen: Absätze, Umbrüche, Kommentare
+
+Eine Leerzeile trennt Absätze. <b>Jede zusätzliche Leerzeile</b> erhöht den Abstand um eine Stufe — auch am Dateianfang (Raum über der ersten Überschrift). Ein einzelner Zeilenumbruch in der Quelle ist ein harter Umbruch:
+so wie hier.
+
+Inline-Markup: <b>fett</b>, <i>kursiv</i>, <u>unterstrichen</u>; ein br-Tag in spitzen Klammern erzwingt den Umbruch mitten im Absatz.<br/>Zeilen, die mit zwei Schrägstrichen beginnen, sind Kommentare (zwischen diesem und dem nächsten Satz steht einer — unsichtbar).
+// Ich bin ein Kommentar und erscheine nicht im PDF.
+Wörtliche eckige Klammern schreibt man mit Backslash davor: \[so\] — sonst würden sie als Tag interpretiert.
+
+## 2. Überschriften
+
+›  # H1   ## H2   ### H3   #### H4   ##### H5‹ am Zeilenanfang. Live:
+
+### Beispiel-H3
+##### Beispiel-H5
+
+## 3. Vertikaler Abstand: \s
+
+›  \s 2‹ fügt zwei Textzeilen Abstand ein (nackte Zahl = Zeilen à 16pt); ›  \s 8*mm‹ ein festes Maß. Zwischen diesem Absatz und dem nächsten: \s 2.
+\s 2
+Angekommen nach zwei Zeilen Extra-Abstand.
+
+## 4. Datum: \[date, …\] (inline)
+
+Der Datums-Tag steht mitten im Text. Optionen: format mit Tokens YYYY YY MM M DD D MONTH MON WEEKDAY WD, lang=de/en/ru/pl/es, modified=1 (Dateidatum statt heute). Live: Heute ist [date, format="WEEKDAY, D. MONTH YYYY", lang=de], kurz [date, format="DD.MM.YY"].
+
+## 5. Bilder: \i
+
+›  \i logo.webp, width=3*cm‹ — Optionen: width/height (Maße), align=left/center/right, float=left/right (Text umfließt), dpi=150 (Bitmap wird auf Anzeigegröße bei dieser Auflösung verkleinert — drastisch kleinere PDFs), dx/dy (optisch verschieben, Layoutplatz bleibt), x/y (absolute Position von links/oben, Bild schwebt über dem Text, kein Flussplatz), layer=back (hinter den Text). Live — zentriert mit dpi:
+
+\i logo.webp, width=3*cm, align=center, dpi=150
+
+\i stempel.webp, width=3.5*cm, x=15*cm, y=4*cm, dpi=150
+Rechts oben auf dieser Seite schwebt zusätzlich ein halbtransparenter Stempel per x/y über dem Text — er hat diesen Absatz nicht verschoben.
+
+Float-Beispiel (Bild links, Text umfließt):
+
+\i logo.webp, width=2.5*cm, float=left, dpi=150
+Dieser Absatz umfließt das links stehende Logo. Sobald die Bildhöhe erreicht ist, nutzt der Text wieder die volle Breite. Genau dafür ist float=left gedacht — etwa für ein Porträtfoto neben dem Anschreiben-Beginn. Der Text läuft einfach weiter und weiter, bis der Effekt sichtbar wird.
+
+\n
+
+## 6. Seitenumbrüche: \n
+
+›  \n‹ erzwingt eine neue Seite (diese hier begann so). ›  \n no_blank‹ bricht nur um, wenn die aktuelle Seite nicht leer ist — es entsteht nie eine Leerseite. Zwei ›\n‹ hintereinander erzeugen bewusst eine leere Seite.
+
+## 7. Ränder: \m
+
+›  \m left=2*cm, right=2*cm, top=1*cm, bottom=1*cm‹ — auch als Kurzform ›\m margins=l:r:t:b‹, deutsche Aliase links/rechts/oben/unten. Wirkt ab hier: links/rechts sofort, oben/unten ab der nächsten Seite. Standard (wenn nichts gesetzt): 1.4cm / 1.0cm / 0.5cm / 0.5cm. Live — ab dem nächsten Absatz 3cm links:
+
+\m left=3*cm
+Dieser Absatz beginnt 3cm vom linken Rand. Ein \m-Tag irgendwo im Dokument gilt ab genau dieser Stelle.
+\m left=1.4*cm
+Und hier gilt wieder der Standard.
+
+## 8. Tabellen: \t … \\t (Blocktabellen)
+
+›  \t grid=on, widths=2:1:1, padding=4:3, spacing=3*mm, rowspacing=1*mm, indent=0, width=…, frame=on, linewidth=0.5, linecolor=#4d4d4d‹ — deutsche Aliase: gitter, breiten, innenabstand, abstand, zeilenabstand, einzug, breite, rahmen, linienbreite, linienfarbe. widths: mit Einheit = fix, nackte Zahl = Gewicht. Danach folgen die Zeilen; ›\\t‹ beendet die Tabelle.
+
+Regeln im Block: Eine Trennzeile ›| :--- | ---: | :---: |‹ macht die Zeilen darüber zur fetten Kopfzeile (Wiederholung bei Seitenumbruch) und setzt die Spaltenausrichtung; eine <i>zweite</i> Trennzeile zeichnet nur eine Linie (Summenzeilen). Direkt aufeinanderfolgende Pipes ›||‹ spannen die Zelle davor über mehrere Spalten (›| Gesamt |||‹ = ganze Breite); ›| |‹ mit Leerzeichen bleibt eine leere Zelle. Eine |-Zeile darf über mehrere Quellzeilen laufen (Ende = Zeile, die mit | aufhört) — Umbrüche werden echte Zellumbrüche. Text <b>ohne</b> führendes | wird eine Zeile über alle Spalten. ›\r spacing=6*mm‹ zwischen zwei Zeilen ändert genau diesen Abstand, ›\r pagebreak‹ erzwingt dort den Umbruch. ›\g…\\g‹ oder ›@‹ halten Zeilen unteilbar zusammen (@ schließt die vorige Gruppe automatisch). ›# Titel‹ in einer Zelle wird eine echte Überschrift. Bei allem auf 0: Tabellenzeilen fallen exakt in den 16pt-Absatzrhythmus. Live:
+
+\t grid=on, widths=2:1:1, rowspacing=1*mm
+| Position | Q1 | Q2 |
+| :--- | ---: | ---: |
+@
+| Miete | 400 | 400 |
+| Strom mit
+Zusatzzeile in der Zelle | 90 | 110 |
+@
+Vollbreiter Hinweis über alle Spalten,
+auch mehrzeilig.
+@
+\r spacing=5*mm
+| ## Zwischensumme || 1000 |
+| # Gesamt |||
+\\t
+
+## 9. Gruppen außerhalb von Tabellen: @
+
+Auch normale Absätze und Bilder lassen sich mit ›@‹ … ›@‹ unteilbar bündeln — die Gruppe wandert am Seitenende geschlossen um. Der Klassiker, Grußformel plus Unterschrift:
+
+@
+Mit freundlichen Grüßen
+
+Max Mustermann
+\i unterschrift.webp, width=4*cm, dpi=150
+@
+
+## 10. Includes und Einbetten
+
+Block-Include: ›\[absender.txt\]‹ allein auf einer Zeile fügt die Datei ein (Zeilen werden Umbrüche); inline mitten im Satz geht ebenso. Live als Block:
+
+[absender.txt]
+
+›  \e Teil.txt‹ bettet eine Quelldatei in DIESES Dokument ein, mit aktiver embedded-Bedingung. Optionen: newpage, newpage_no_blank, keepmargins (eigene \m-Tags der Datei ignorieren; sonst gelten sie und die Elternränder kehren danach zurück). Bedingungen: ›\c embedded … \\c‹-Blöcke oder condition=embedded/!embedded als Parameter an jedem Tag. Live (Teil.txt blendet seinen Absender aus und zeigt seinen Nur-eingebettet-Satz):
+
+\e Teil.txt
+
+Zurück im Hauptdokument, wieder mit Standardrändern.
+
+## 11. Loops über Datendateien: \loop
+
+›  \loop kontakte.txt, D=\n\n‹ … ›\\loop‹ wiederholt den Rumpf pro Datensatz (Trenner D, Escapes \n \t; Standard Leerzeile). Die Zeilen des Datensatzes sind die Felder: ›:0‹ = Zeile 0, ›:1:3‹ = Zeilen 1–3, ›:4:‹ = Zeile 4 bis Ende. Doppelpunkte zählen nur nach Zeilenanfang, Leerzeichen oder | als Platzhalter. Live:
+
+\t grid=on, widths=1:2
+| Name | E-Mail |
+| :--- | :--- |
+\loop kontakte.txt
+@
+| :0 | :1 |
+\\loop
+\\t
+
+## 11b. \file und die Bereichs-Syntax
+
+›\file datei.txt(, D=...)‹ … ›\\file‹ ist der \loop ohne Wiederholung: EIN Durchlauf, die Felder sind alle Zeilen der Datei (globale Nummerierung). In \loop und \file gilt dieselbe Platzhalter-Grammatik ›:START(:END)?‹ mit einem Cursor, der nach jeder Lieferung hinter der letzten Zeile steht:
+
+START — Zahl = absolut; ›+N‹/›-N‹ = relativ zum Cursor (auch rückwärts zu bereits gelieferten Zeilen); leer = Cursor; ›.‹ = Zeile 0; ›$var‹ = Variable.
+END — Zahl = absolut; ›+N‹ = START+N (einschließlich, ›:10:+4‹ liefert 10–14); ›$var‹; leer = bis zum Ende bzw. bis zum nächsten Delimiter, wenn D= am Tag gesetzt ist; ›$‹ = garantiert bis zum Datei-/Datensatzende.
+
+›$name='<‹ und ›$name='>‹ hinter einem Platzhalter speichern dessen erste bzw. letzte Zeilennummer; danach per ›:$name‹ nutzbar. Live (werte.txt hat 6 Zeilen):
+
+\file werte.txt
+\t grid=on, widths=1:2
+| :0 | :1:+2 $a='< $e='> |
+| nochmal ab $a | :$a:$e |
+| Cursor weiter | ::+0 |
+| Rest ab 4 | :4:$ |
+\\t
+\\file
+
+## 11c. Datensätze, virtuelle Dateien, Variablen
+
+Mit D= zerfällt die Datei in DATENSATZ-PAKETE (›\n‹ ist ein Umbruch: eine Leerzeile dazwischen = ›D=\n\n‹, zwei Leerzeilen = ›D=\n\n\n‹). ›$#N:a:b‹ liefert Zeilen a–b des Pakets N (paketlokal gezählt; ›$#0::‹ = ganzes Paket 0, ›$#1:0‹ = eine Zeile). Ohne Nummer gilt der PAKET-ZEIGER: er startet bei 0 und rückt nach jedem Zugriff auf N+1 — ›$#::‹ hintereinander wandert also durch die Pakete, ein explizites ›$#4::‹ setzt den Zeiger mit. ›$:a:b‹ = ›$#:a:b‹. Im \loop meint ein nacktes ›$#‹ den aktuellen Durchlauf; Loops dürfen jetzt verschachtelt werden, und ›$##:0:‹ greift im inneren Loop auf den Datensatz des äußeren zu (jedes weitere # eine Ebene höher).
+
+›\virtual name.ext‹ … ›\\virtual‹ registriert die Zeilen dazwischen als VIRTUELLE DATEI — alle Leser (\loop/\file/\mloop, \[Includes\], \jloop/\jload, @Pools) schauen dort zuerst nach. ›$name=wert‹ setzt eine VARIABLE, die ab da überall ersetzt wird, auch in Tag-Parametern (\pdfgen file=Brief-$name.pdf); in Block-Tags überschriebene Variablen erhalten beim Verlassen ihren alten Wert zurück. Live (virtuelle Datei, zwei Pakete, Zeiger):
+
+$produkt=Beispielware
+
+\virtual pakete.txt
+Kopf A
+Wert A
+
+Kopf B
+Wert B
+\\virtual
+
+\file pakete.txt, D=\n\n
+\t grid=on, widths=1:2
+| Paket 0 | $#0:1: |
+| Zeiger (Paket 1) | $#:0 |
+| Variable | $produkt |
+\\t
+\\file
+
+›\virtual‹ darf auch ›\json‹, ›\txt‹, ›\text‹ oder ›\data‹ heißen. TEXTBAUSTEINE: ›\segment Name‹ … ›\\segment‹ definiert (und überschreibt) einen Baustein, eine nackte ›\segment Name‹-Zeile setzt ihn ein; Variablen darin tragen den Wert der Einsatzstelle. Die Paket-Grammatik gilt auch auf VARIABLENWERTEN mit mehreren Zeilen (JSON-Werte, Bausteine als $Name): ›$body::0‹ = erste Zeile, ›$body::0:‹ = bis zum Absatzende, ›$body:#1::‹ = Paket 1, ›$body:#::‹ = Paket am Zeiger, eigener Trenner per ›$body:#0::, D=\n\n\n‹. Variablen funktionieren auch in Bedingungen: ›\c $versand=express‹, ›\c !$rabatt‹, ›filter=$status!=gesperrt‹.
+
+## 12. Fremde PDFs einfügen: \p und \pdfgen include
+
+›  \p Extern.pdf‹ fügt alle Seiten einer bestehenden PDF an dieser Stelle ein (klassische wie moderne Dateien mit xref-Streams; verschlüsselte werden abgelehnt); Option newpage_no_blank verwirft eine leere Seite davor. ›\pdfgen Quelle.txt, include‹ rendert die Quelle und fügt deren Seiten ein. Nach dem Einschub geht es auf einer frischen Seite weiter — Kopf/Fuß erscheinen nur auf eigenen Seiten. Live folgt jetzt Extern.pdf:
+
+\p Extern.pdf
+
+## 13. Projekte: mehrere PDFs und Mails aus einer Quelle
+
+›  \pdfgen Quelle.txt, file=Name.pdf‹ beendet das aktuelle Dokument und startet das nächste (ohne Quelle: die folgenden Zeilen sind der Inhalt; margins=… setzt dessen Ränder). ›\mail Name, to=a@x b@y, cc=…, attachment=…, test=…‹ definiert eine E-Mail: erste Zeile danach = Betreff, Rest bis zum nächsten Tag = Text; ›\attach mail=Name, file=X.pdf‹ hängt weitere Dateien an. Versand: ›pdfgen . --mail‹ (alle), ›--mail Name1 Name2‹ (Auswahl), ›--mail-test‹ (nur an die test=-Adresse, Betreff mit \[TEST\]-Präfix). Absenderkonten liegen in pdfgen.conf: neben Gmail auch outlook, gmx, web.de, t-online, yahoo, icloud sowie ›\[smtp HOST:PORT\]‹ für beliebige Server und das Flag xoauth2 für OAuth2-Token; ›--sender ADRESSE TOKEN‹ erkennt den Anbieter an der Domain, ›--mail-accounts‹ zeigt die aufgelösten Konten. Ohne jegliche Projekt-Tags gilt: Verzeichnis → Bewerbung.pdf, ›pdfgen Beispiel.txt‹ → Beispiel.pdf. Am Ende dieser Datei folgt live ein zweites Dokument samt Mail-Definition — deshalb existiert nach dem Rendern auch SyntaxTeil.pdf.
+
+## 14. Styles: forward, style=, name=, clean
+
+Jedes Element kann seine Parameter wiederverwendbar machen. ›name=Stil1‹ speichert den <b>effektiven</b> Parametersatz als Memento; ›style=Stil1‹ lädt ihn an genau dieser Position der Liste — Parameter <b>vor</b> style= werden vom Style überschrieben, Parameter <b>danach</b> überschreiben den Style. ›forward‹ merkt die effektiven Werte zusätzlich akkumulativ pro Elementtyp vor: jedes <b>folgende</b> Element desselben Typs erbt sie automatisch als Basis. ›clean‹ ignoriert den Forward-Speicher und leert ihn — ab hier ist die Weitergabe beendet. Das funktioniert für alle Elemente (Tabellen, Bilder, Zeilen-, Rand-, Embed- und PDF-Tags); Styles gelten je Quelldatei. Live:
+
+\t forward, grid=on, widths=2:1, name=basis
+| Erste Tabelle | definiert grid, widths und den Style ›basis‹ |
+\\t
+\t
+| Zweite Tabelle | erbt beides automatisch per forward |
+\\t
+\t style=basis, widths=1:2
+| Dritte | lädt ›basis‹, überschreibt danach die Spalten auf 1:2 |
+\\t
+\t clean
+| Vierte | clean: ohne Vererbung, forward ab hier beendet |
+\\t
+
+## 15. Parsing schalten: \off und \on
+
+›\off‹ schaltet das Parsing aus: ab dort erscheint jede Zeile wörtlich im PDF (Tags, Tabellen, Platzhalter bleiben sichtbar), bis auf gleicher Ebene ›\on‹ folgt. Als Zeilen-Präfix gilt der Schalter für genau diese Zeile — außer dahinter beginnt ein Block: ›\off \t …‹ macht die ganze Tabelle bis zu ihrem Ende wörtlich. In \t, \loop und \file wirkt ein freistehender Schalter bis zum Elementende, dann kehrt der vorherige Zustand zurück; ›\on D=…‹ wirkt bis zum nächsten Delimiter. ›\on!‹/›\off!‹ erzwingen den Zustand durch alle offenen Ebenen. Ausgeschaltete Platzhalterzeilen bewegen den Loop-Cursor nicht. Live — der Quelltext einer Tabelle als Text, nur die Überschrift echt:
+
+\off
+\t grid=on, widths=1:2
+| Name | E-Mail |
+\on ##### Echte kleine Überschrift mitten im Literalblock
+\loop kontakte.txt
+| :0 | :1 |
+\\loop
+\\t
+\on
+
+## 16. GitHub-Markdown
+
+pdfgen versteht die gängige GitHub-Syntax — in .txt-Dateien zusätzlich zur eigenen, und ganze .md-Dateien rendern direkt zu PDF (›pdfgen README.md‹ → README.pdf; ein Verzeichnis darf statt text.txt auch text.md enthalten). Überschriften und Tabellen sind ohnehin dieselbe Syntax. Es gibt **fett**, *kursiv*, ~~durchgestrichen~~ und `inline code`; Backslash entschärft \* \_ \` \~. Listen mit - oder 1., zwei Leerzeichen rücken eine Ebene ein, - \[ \] und - \[x\] werden Kästchen:
+
+- Ein Punkt mit `code`
+  - verschachtelt
+- [x] erledigt
+
+> Blockzitate mit **Markup**, darunter eine Trennlinie aus drei Strichen:
+
+---
+
+Codeblöcke zwischen drei Backticks bleiben wörtlich (Einrückung erhalten):
+
+```
+\t grid=on   ← wird NICHT zur Tabelle
+```
+
+\[Text\](url) und Autolinks in spitzen Klammern werden klickbar: [Beispiel-Link](https://example.com). Nur in .md-Dateien gilt zudem die Markdown-Zeilenlogik: einfache Umbrüche fließen zusammen, ein harter Umbruch braucht zwei Leerzeichen am Zeilenende — .txt behält die pdfgen-Regel (jeder Umbruch ist hart). Einzige echte Verhaltensänderung in .txt: eine Zeile aus nur Strichen/Sternen (ab drei) ist jetzt eine Trennlinie, und ein Stern/Minus mit Leerzeichen am Zeilenanfang beginnt eine Liste — wer das wörtlich braucht, nutzt \off oder den Backslash-Escape.
+
+Damit ist jeder Tag einmal erklärt und vorgeführt. Diese Quelldatei selbst ist das beste Beispiel: einfach neben die eigene text.txt legen und nachschlagen.
+\pdfgen file=SyntaxTeil.pdf
+# Zweites Dokument aus derselben Quelle
+
+Dieses PDF entstand durch den \pdfgen-Tag am Ende von Syntax.txt.
+\mail Demo, to=empfaenger@example.com, cc=kopie@example.com, attachment=Syntax.pdf, test=ich@example.com
+Betreffzeile der Demo-Mail
+Sehr geehrte Damen und Herren,
+
+dies ist der Mailtext aus der \mail-Definition.
+
+Mit freundlichen Grüßen
+\attach mail=Demo, file=SyntaxTeil.pdf

@@ -1,0 +1,33 @@
+# pdfgen.conf -- Absenderkonten (neben die Binary legen oder mit -c angeben)
+# Kommentare mit #, ; oder //. Pro Konto: Kopfzeile, Adresse, Token.
+# Das Token ist ein APP-PASSWORT des Anbieters (nicht das Kontopasswort);
+# Leerzeichen darin sind egal.
+
+[gmail default]
+ich@gmail.com
+abcd efgh ijkl mnop
+
+# Weitere Anbieter -- Host/Port/TLS sind hinterlegt:
+#   outlook (auch office365)   smtp.office365.com:587  STARTTLS
+#   gmx                        mail.gmx.net:587        STARTTLS
+#   web.de                     smtp.web.de:587         STARTTLS
+#   t-online                   securesmtp.t-online.de:465  SSL
+#   yahoo                      smtp.mail.yahoo.com:465 SSL
+#   icloud                     smtp.mail.me.com:587    STARTTLS
+[gmx]
+privat@gmx.de
+gmx-app-passwort
+
+# Beliebiger anderer Server: [smtp HOST:PORT] (587=STARTTLS) bzw.
+# [smtp HOST:465 ssl] fuer implizites TLS.
+[smtp mail.firma.de:587]
+ich@firma.de
+passwort
+
+# OAuth2 statt App-Passwort: Flag xoauth2, Token-Zeile = Bearer-Token.
+# [gmail xoauth2]
+# oauth@gmail.com
+# ya29....
+
+[test]
+test@example.com

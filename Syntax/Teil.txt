@@ -1,0 +1,8 @@
+\m left=3*cm
+## Eingebetteter Teil (aus Teil.txt)
+
+\[absender.txt\]-Include nur eigenständig:
+[absender.txt, condition=!embedded]
+\c embedded
+Dieser Satz existiert nur im eingebetteten Zustand.
+\\c

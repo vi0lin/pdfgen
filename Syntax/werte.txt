@@ -1,0 +1,6 @@
+Spalte 1
+Wert A
+Wert B
+Wert C
+Langer Text über die ganze Breite,
+gern auch mehrzeilig.

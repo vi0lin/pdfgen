@@ -1,0 +1,21 @@
+builds/
+!builds/exe/pdfgen.exe
+!builds/deb/pdfgen
+external/
+pdf.zip
+*.o
+pdfgen
+# echte Zugangsdaten niemals einchecken
+pdfgen.conf
+*.unreleased
+
+.xbm-sync/
+.xbm-run.sh
+.xbm-exec.sh
+.deps-cache/
+stand.zip
+.stand-liste
+build.sh
+publish_release.sh
+toolchains/
+build.sh.conf.unreleased

@@ -1,0 +1,45 @@
+\jloop kunden.json, filter=$status!=gesperrt
+\pdfgen, file=Angebot-$#.pdf
+# Angebot für $name
+
+Sehr geehrte/r $name aus $ort,
+
+anbei Ihre Positionen:
+
+\t grid=on, widths=3:1
+| Posten | Preis |
+| :--- | ---: |
+\jloop $posten
+| $_.text | $_.preis € |
+\\jloop
+\\t
+\c $rabatt
+Als Stammkunde erhalten Sie $rabatt % Rabatt!
+\\c
+\c !$rabatt
+// kein Rabattfeld -> Standardtext
+Gern erstellen wir Ihnen ein Folgeangebot.
+\\c
+
+\mail Kunde$#, to=$email, attachment=Angebot-$#.pdf
+Ihr Angebot, $name
+Hallo $name, anbei Ihr persönliches Angebot aus $ort. Viele Grüße!
+\\jloop
+
+\jloop emails.json
+\jload kunden.json, match=email=$_, as=kd
+\c $kd
+\pdfgen, file=Info-$#.pdf
+# Info für $kd.name ($_)
+Ihre hinterlegte Stadt: $kd.ort
+\mail Info$#, to=$_
+Kurzinfo für $kd.name
+Hallo $kd.name!
+\\c
+\c !$kd
+// E-Mail ohne Kundendatensatz: nur Mail, kein PDF
+\mail Neu$#, to=$_
+Willkommen!
+Hallo, zu Ihrer Adresse $_ liegt noch kein Kundendatensatz vor.
+\\c
+\\jloop
