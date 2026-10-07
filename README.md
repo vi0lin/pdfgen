@@ -637,6 +637,17 @@ child mails with `\\mail` (without it the mail body runs to the child's
 end, with a warning). The rest of the child stays ordinary embedded
 content (`embedded` condition, margins handling as usual).
 
+**`\jload` binds bare keys too** — after `\jload daten.json, as=data`
+the record's keys work BOTH ways: bare (`$empf`, `$heading`) and qualified
+(`$data.empf`) — the qualified form disambiguates when an outer loop uses
+the same key names. `--version` prints the build's API levels, so "is my
+pdfgen.exe current?" is one command: compare `markup`/`project` against the
+DELTA-NOTES of the last merge. Tag values strip surrounding quotes
+(`file="Bewerbung-$empf::0.pdf"` names the file without them). Remember the
+range grammar on variables needs TWO introducer characters: `$empf::0`
+(first line), not `$empf:0` — a single `:` after a name stays literal so
+prose and ports are safe.
+
 **`\jread Name quelle.json`** — loads a JSON file (or `$variable` holding
 JSON text) and binds it as `$Name` without looping: `$Name.vorname`,
 `$Name.posten[0].preis`. An array root binds its FIRST record; for all

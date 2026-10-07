@@ -42,6 +42,15 @@
   #include <unistd.h>
 #endif
 
+#include "jsondata.h"
+#include "markup.h"
+#include "flowables.h"
+#include "pdfwriter.h"
+#include "metrics.h"
+#include "image.h"
+#include "ttffont.h"
+#include "pdfimport.h"
+#include "gmail_send.h"
 #include "mail_config.h"
 #include "pdfgen_host.h"
 #include "project.h"
@@ -110,6 +119,7 @@ void usage(const char* argv0) {
       "                       pulls in the documents it needs\n"
       "  --default-sender ADDR\n"
       "  --test-to ADDR       add a test recipient (repeatable)\n"
+      "  -V, --version        print the build's API levels and exit\n"
       "  -v, --verbose        also print debug messages\n";
 }
 
@@ -134,6 +144,25 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "-h" || a == "--help") { usage(argv[0]); return 0; }
+    if (a == "--version" || a == "-V") {
+      // Welcher Stand ist diese Binary? Die API-Nummern identifizieren das
+      // Delta eindeutig, __DATE__/__TIME__ den Uebersetzungszeitpunkt.
+      printf("pdfgen  (gebaut %s %s)\n", __DATE__, __TIME__);
+      printf("  markup %d  project %d  flowables %d  pdfwriter %d  metrics %d\n",
+             PDFGEN_MARKUP_API, PDFGEN_PROJECT_API, PDFGEN_FLOWABLES_API,
+             PDFGEN_PDFWRITER_API, PDFGEN_METRICS_API);
+      printf("  image %d  ttffont %d  pdfimport %d  jsondata %d  mail %d/%d/%d\n",
+             PDFGEN_IMAGE_API, PDFGEN_TTFFONT_API, PDFGEN_PDFIMPORT_API,
+             PDFGEN_JSONDATA_API, PDFGEN_GMAIL_SEND_API,
+             PDFGEN_MAIL_CONFIG_API,
+#ifdef PDFGEN_MAIL_DISPATCH_API
+             PDFGEN_MAIL_DISPATCH_API
+#else
+             1
+#endif
+             );
+      return 0;
+    }
     if (a == "-v" || a == "--verbose") { pdfgen_set_log_sink(verboseSink, nullptr); continue; }
     if (a == "--mail")      { mailMode = true; continue; }
     if (a == "--mail-test") { mailTest = true; continue; }

@@ -91,7 +91,13 @@ bool parseTag(const std::string& tagText, Tag& out) {
   for (size_t i = 1; i < parts.size(); ++i) {
     size_t e = parts[i].find('=');
     if (e == std::string::npos) out.opts.push_back({toLower(parts[i]), ""});
-    else out.opts.push_back({toLower(trim(parts[i].substr(0, e))), trim(parts[i].substr(e + 1))});
+    else {
+      std::string v = trim(parts[i].substr(e + 1));
+      // umschliessende Anfuehrungszeichen abstreifen: file="A B.pdf"
+      if (v.size() >= 2 && v.front() == '"' && v.back() == '"')
+        v = v.substr(1, v.size() - 2);
+      out.opts.push_back({toLower(trim(parts[i].substr(0, e))), v});
+    }
   }
   return true;
 }
@@ -1052,10 +1058,16 @@ std::string expandMergeJson(const std::vector<std::string>& lines,
         }
       }
       ctx.frames.push_back({asName, hit, 0});
+      // ZUSAETZLICH anonym binden: nackte Keys ($empf, $heading) zeigen
+      // auf denselben Datensatz -- $name.key bleibt fuer Eindeutigkeit.
+      ctx.frames.push_back({"", hit, 0});
       continue;
     }
 
     if (low == "\\\\jload") {
+      // anonymer + benannter Frame des \jload
+      if (ctx.frames.size() > frameFloor && ctx.frames.back().name.empty())
+        ctx.frames.pop_back();
       if (ctx.frames.size() > frameFloor && !ctx.frames.back().name.empty())
         ctx.frames.pop_back();
       continue;
