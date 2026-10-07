@@ -61,7 +61,7 @@ E-Mail: email_adresse@gmail.com
 \\segment
 
 \jloop bewerbungs-daten.json
-\pdfgen file=Bewerbung-$empf:0.pdf
+\pdfgen file=Bewerbung-0.pdf
 \m top=0cm
 // \h
 // \t widths=1:1, padding=0:0
@@ -99,7 +99,7 @@ Vorname Nachname
 
 \t widths=3:5, padding=0.0
 | :--- | :--- |
-| [sender - Kopie.txt] | $empf |
+| [sender.txt] | $empf |
 \\t
 
 
@@ -113,8 +113,8 @@ $body
 \segment Unterschrift
 \n
 \m top=1.5cm
-\c $embedded
-[sender - Kopie.txt]
+\c 1==1
+[sender.txt]
 \\c
 
 # Lebenslauf
@@ -137,16 +137,10 @@ $body
 \mail M:$#, to=$to, cc=cc_email@gmail.com
 $heading - Vorname Nachname
 
-\c $mailbody
-$mailbody
-\\c
-
-\c !$mailbody
 Sehr geehrte Damen und Herren,
 
 anbei erhalten Sie meine Bewerbungsunterlagen für die Stelle als $heading.
 Über die Gelegenheit zu einem persönlichen Gespräch freue ich mich sehr.
-\\c
 
 \segment Mit_Freundlichen_Grüßen
 
