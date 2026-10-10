@@ -22,17 +22,17 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: it lacks PDFGEN_MARKUP_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_MARKUP_API != 20
+#elif PDFGEN_MARKUP_API != 21
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
 #error "stale flowables.h: it lacks PDFGEN_FLOWABLES_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_FLOWABLES_API != 13
+#elif PDFGEN_FLOWABLES_API != 14
 #error "version mismatch in flowables.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_PDFWRITER_API
 #error "stale pdfwriter.h: it lacks PDFGEN_PDFWRITER_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_PDFWRITER_API != 7
+#elif PDFGEN_PDFWRITER_API != 8
 #error "version mismatch in pdfwriter.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 
@@ -2236,6 +2236,30 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
   while (std::getline(ss, line)) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
 
+    if (!line.empty() && line[0] == '\x05' && !blockTable) {   // doc features
+      flushTable(); flushText();
+      flushBreak();
+      anyContent = true;
+      std::string m = line.substr(1);
+      Token tk;
+      if (m == "toc") tk.kind = Token::Kind::Toc;
+      else if (m.rfind("toctitle ", 0) == 0) {
+        tk.kind = Token::Kind::Heading;
+        tk.level = 1;
+        tk.nonum = true;
+        tk.dest = "-";                       // kein TOC-Selbsteintrag
+        tk.text = trim(m.substr(9));
+      }
+      else if (m == "abblist") tk.kind = Token::Kind::AbbList;
+      else if (m == "citelist") tk.kind = Token::Kind::CiteList;
+      else if (m == "glosslist") tk.kind = Token::Kind::GlossList;
+      else if (m.rfind("abb ", 0) == 0) {
+        tk.kind = Token::Kind::AbbCaption;
+        tk.text = trim(m.substr(4));
+      } else { continue; }
+      tokens.push_back(std::move(tk));
+      continue;
+    }
     if (!line.empty() && line[0] == '\x04' && !blockTable) {   // fenced code
       flushTable(); flushText();
       pendingCode += line.substr(1);
@@ -2721,14 +2745,254 @@ std::vector<Token> tokenize(const std::string& rawText, const Options& opt,
 static pdf::FlowList buildFlowablesInner(const std::vector<Token>& tokens,
                                          const std::string& baseDir,
                                          std::vector<std::string>& warnings,
-                                         const BuildContext* ctx);
+                                         const BuildContext* ctx,
+                                         const DocFeatures* feats);
+
+// ==== \toc / \abb / \cite / \glossar =========================================
+std::string extractRegisters(const std::string& text, DocFeatures& feats,
+                             std::vector<std::string>& warnings) {
+  if (text.find("\\toc") == std::string::npos &&
+      text.find("\\abb") == std::string::npos &&
+      text.find("\\cite") == std::string::npos &&
+      text.find("\\glossar") == std::string::npos)
+    return text;
+  std::vector<std::string> lines;
+  {
+    std::stringstream ss(text);
+    std::string l;
+    while (std::getline(ss, l)) {
+      if (!l.empty() && l.back() == '\r') l.pop_back();
+      lines.push_back(l);
+    }
+  }
+  auto tagRest = [&](const std::string& t, const char* w, std::string& rest) {
+    size_t n = std::strlen(w);
+    std::string low = toLower(t);
+    if (low.rfind(w, 0) != 0) return false;
+    if (t.size() == n) { rest.clear(); return true; }
+    if (t[n] != ' ' && t[n] != '\t') return false;
+    rest = trim(t.substr(n));
+    return true;
+  };
+  std::string out;
+  auto emit = [&](const std::string& l) { out += l; out += '\n'; };
+  for (size_t li = 0; li < lines.size(); ++li) {
+    std::string t = trim(lines[li]);
+    std::string rest;
+    if (!t.empty() && t[0] == '\x03') { emit(lines[li]); continue; }
+    if (tagRest(t, "\\toc", rest)) {
+      feats.tocPresent = true;
+      if (!rest.empty()) emit("\x05" "toctitle " + rest);
+      emit("\x05" "toc");
+      continue;
+    }
+    if (tagRest(t, "\\abb", rest)) {
+      if (rest.empty()) { feats.hasAbb = true; emit("\x05" "abblist"); }
+      else emit(std::string("\x05") + "abb " + rest);
+      continue;
+    }
+    bool isCite = tagRest(t, "\\cite", rest);
+    bool isGloss = !isCite && tagRest(t, "\\glossar", rest);
+    if (isCite || isGloss) {
+      if (rest.empty()) {                      // bare marker: register pages
+        (isCite ? feats.hasCite : feats.hasGloss) = true;
+        emit(std::string("\x05") + (isCite ? "citelist" : "glosslist"));
+        continue;
+      }
+      // definition: phrase + following lines up to a blank line or the
+      // next \cite/\glossar line
+      DocFeatures::Item it;
+      it.phrase = rest;
+      size_t j = li + 1;
+      for (; j < lines.size(); ++j) {
+        std::string jt = trim(lines[j]);
+        std::string dummy;
+        if (jt.empty()) break;
+        if (tagRest(jt, "\\cite", dummy) || tagRest(jt, "\\glossar", dummy) ||
+            tagRest(jt, "\\toc", dummy) || tagRest(jt, "\\abb", dummy))
+          break;
+        it.body.push_back(lines[j]);
+      }
+      if (it.body.empty())
+        warnings.push_back(std::string(isCite ? "\\cite " : "\\glossar ") +
+                           it.phrase + ": Eintrag ohne Text");
+      auto& v = isCite ? feats.cites : feats.gloss;
+      it.dest = (isCite ? "c" : "g") + std::to_string(v.size());
+      v.push_back(std::move(it));
+      li = j - 1;
+      continue;
+    }
+    emit(lines[li]);
+  }
+  if (!text.empty() && text.back() != '\n' && !out.empty()) out.pop_back();
+  return out;
+}
+
+namespace {
+// replace every occurrence of `phrase` in body markup by an internal link
+void autoLinkPhrase(std::string& text, const std::string& phrase,
+                    const std::string& dest) {
+  if (phrase.empty()) return;
+  std::string out;
+  size_t i = 0;
+  const std::string open = "<a=#" + dest + ">";
+  while (true) {
+    size_t hit = text.find(phrase, i);
+    if (hit == std::string::npos) { out += text.substr(i); break; }
+    out += text.substr(i, hit - i);
+    out += open;
+    out += phrase;
+    out += "</a>";
+    i = hit + phrase.size();
+  }
+  text.swap(out);
+}
+}  // namespace
+
+void applyDocFeatures(std::vector<Token>& tokens, DocFeatures& feats,
+                      std::vector<std::string>& warnings) {
+  (void)warnings;
+  int counters[5] = {0, 0, 0, 0, 0};
+  int abbInChapter = 0, abbSeq = 0, headSeq = 0;
+  std::vector<Token> out;
+  out.reserve(tokens.size());
+
+  auto addHead = [&](int level, const std::string& num, const std::string& title,
+                     const std::string& dest) {
+    feats.heads.push_back({level, num, title, dest});
+  };
+  auto makeHeading = [&](const std::string& title, int level, bool nonum,
+                         const std::string& dest) {
+    Token h;
+    h.kind = Token::Kind::Heading;
+    h.level = level;
+    h.text = title;
+    h.nonum = nonum;
+    h.dest = dest;
+    out.push_back(std::move(h));
+    addHead(level, "", title, dest);
+  };
+  auto newPage = [&]() {
+    Token n;
+    n.kind = Token::Kind::NewPage;
+    n.noBlank = true;
+    out.push_back(std::move(n));
+  };
+  auto registerPages = [&](const char* title,
+                           std::vector<DocFeatures::Item>& items,
+                           const char* prefix) {
+    newPage();
+    makeHeading(title, 1, true, std::string("r") + prefix);
+    for (auto& it : items) {
+      Token term;
+      term.kind = Token::Kind::Text;
+      term.text = "<b>" + it.phrase + "</b>";
+      term.dest = it.dest;
+      out.push_back(std::move(term));
+      std::string body;
+      for (size_t k = 0; k < it.body.size(); ++k) {
+        if (k) body += "\n";
+        body += it.body[k];
+      }
+      if (!body.empty()) {
+        Token b;
+        b.kind = Token::Kind::Text;
+        b.text = body;
+        out.push_back(std::move(b));
+      }
+    }
+  };
+
+  for (auto& t : tokens) {
+    switch (t.kind) {
+      case Token::Kind::Heading: {
+        if (feats.tocPresent && !t.nonum && t.level >= 1 && t.level <= 5) {
+          counters[t.level - 1]++;
+          for (int k = t.level; k < 5; ++k) counters[k] = 0;
+          std::string num;
+          for (int k = 0; k < t.level; ++k) {
+            if (k) num += ".";
+            num += std::to_string(counters[k]);
+          }
+          if (t.level == 1) abbInChapter = 0;
+          std::string dest = "h" + std::to_string(headSeq++);
+          t.dest = dest;
+          addHead(t.level, num, t.text, dest);
+          t.text = num + (t.level == 1 ? ". " : " ") + t.text;
+        } else if (t.dest == "-") {
+          t.dest.clear();                          // \toc-Titel: ungelistet
+        } else if (!t.dest.empty() || t.nonum) {
+          // pre-built register heading: already in feats.heads
+        } else {
+          std::string dest = "h" + std::to_string(headSeq++);
+          t.dest = dest;
+          addHead(t.level, "", t.text, dest);
+        }
+        out.push_back(std::move(t));
+        break;
+      }
+      case Token::Kind::AbbCaption: {
+        ++abbSeq;
+        std::string num;
+        if (feats.tocPresent && counters[0] > 0)
+          num = std::to_string(counters[0]) + "." +
+                std::to_string(++abbInChapter);
+        else
+          num = std::to_string(abbSeq);
+        DocFeatures::Item it;
+        it.num = num;
+        it.phrase = t.text;
+        it.dest = "f" + std::to_string(abbSeq - 1);
+        feats.abbs.push_back(it);
+        Token cap;
+        cap.kind = Token::Kind::Text;
+        cap.text = "<i>Abbildung " + num + ": " + t.text + "</i>";
+        cap.dest = it.dest;
+        out.push_back(std::move(cap));
+        break;
+      }
+      case Token::Kind::AbbList:
+        newPage();
+        makeHeading("Abbildungsverzeichnis", 1, true, "rabb");
+        out.push_back(std::move(t));               // stays: built as TocFlow
+        break;
+      case Token::Kind::CiteList:
+        registerPages("Zitatregister", feats.cites, "cite");
+        break;
+      case Token::Kind::GlossList:
+        registerPages("Glossar", feats.gloss, "gloss");
+        break;
+      default:
+        out.push_back(std::move(t));
+    }
+  }
+  tokens.swap(out);
+
+  // auto-link register phrases in body text (longest phrases first, so a
+  // phrase that contains another is linked as a whole)
+  std::vector<const DocFeatures::Item*> all;
+  for (auto& v : {&feats.cites, &feats.gloss})
+    for (auto& it : *v) all.push_back(&it);
+  std::sort(all.begin(), all.end(), [](auto* a, auto* b) {
+    return a->phrase.size() > b->phrase.size();
+  });
+  for (auto& t : tokens) {
+    if (t.kind != Token::Kind::Text && t.kind != Token::Kind::Quote &&
+        t.kind != Token::Kind::ListItem)
+      continue;
+    if (!t.dest.empty()) continue;                 // register entries selbst
+    for (auto* it : all) autoLinkPhrase(t.text, it->phrase, it->dest);
+  }
+}
+
 
 pdf::FlowList buildFlowables(const std::vector<Token>& tokens,
                              const std::string& baseDir,
                              std::vector<std::string>& warnings,
-                             const BuildContext* ctx) {
+                             const BuildContext* ctx,
+                             const DocFeatures* feats) {
   using namespace pdf;
-  FlowList flat = buildFlowablesInner(tokens, baseDir, warnings, ctx);
+  FlowList flat = buildFlowablesInner(tokens, baseDir, warnings, ctx, feats);
   // group marks: wrap the flowables between a start and its end into one
   // StackFlow so they can never be split across pages
   FlowList out;
@@ -2769,7 +3033,8 @@ pdf::FlowList buildFlowables(const std::vector<Token>& tokens,
 static pdf::FlowList buildFlowablesInner(const std::vector<Token>& tokens,
                                          const std::string& baseDir,
                                          std::vector<std::string>& warnings,
-                                         const BuildContext* ctx) {
+                                         const BuildContext* ctx,
+                                         const DocFeatures* feats) {
   using namespace pdf;
   FlowList out;
   const double gap = 0.3 * CM;                      // paragraph / image spacing
@@ -2867,8 +3132,12 @@ static pdf::FlowList buildFlowablesInner(const std::vector<Token>& tokens,
     const Token& t = tokens[i];
     switch (t.kind) {
       case Token::Kind::Text: {
-        out.push_back(std::make_unique<Paragraph>(
-            unescapeLiteralBrackets(t.text), styles::body()));
+        {
+          auto para = std::make_unique<Paragraph>(
+              unescapeLiteralBrackets(t.text), styles::body());
+          if (!t.dest.empty()) para->setDestName(t.dest);
+          out.push_back(std::move(para));
+        }
         // a directly following table with its own spacing= governs the gap
         bool nextTableWithSpacing =
             i + 1 < tokens.size() && tokens[i + 1].kind == Token::Kind::Table &&
@@ -2878,10 +3147,53 @@ static pdf::FlowList buildFlowablesInner(const std::vector<Token>& tokens,
         break;
       }
 
-      case Token::Kind::Heading:
-        out.push_back(std::make_unique<Paragraph>(
-            unescapeLiteralBrackets(t.text), styles::heading(t.level)));
+      case Token::Kind::Heading: {
+        auto para = std::make_unique<Paragraph>(
+            unescapeLiteralBrackets(t.text), styles::heading(t.level));
+        if (!t.dest.empty()) para->setDestName(t.dest);
+        out.push_back(std::move(para));
         break;
+      }
+
+      case Token::Kind::Toc: {
+        std::vector<TocFlow::Entry> es;
+        if (feats)
+          for (const auto& h : feats->heads) {
+            TocFlow::Entry e;
+            e.num = h.num;
+            e.title = h.title;
+            e.dest = h.dest;
+            e.level = h.level;
+            auto it = feats->pages.find(h.dest);
+            e.page = it != feats->pages.end() ? it->second : 0;
+            es.push_back(std::move(e));
+          }
+        out.push_back(std::make_unique<TocFlow>(std::move(es)));
+        out.push_back(std::make_unique<Spacer>(gap));
+        break;
+      }
+
+      case Token::Kind::AbbList: {
+        std::vector<TocFlow::Entry> es;
+        if (feats)
+          for (const auto& a : feats->abbs) {
+            TocFlow::Entry e;
+            e.num = a.num;
+            e.title = a.phrase;
+            e.dest = a.dest;
+            e.level = 1;
+            auto it = feats->pages.find(a.dest);
+            e.page = it != feats->pages.end() ? it->second : 0;
+            es.push_back(std::move(e));
+          }
+        out.push_back(std::make_unique<TocFlow>(std::move(es)));
+        break;
+      }
+
+      case Token::Kind::AbbCaption:
+      case Token::Kind::CiteList:
+      case Token::Kind::GlossList:
+        break;                                     // ersetzt in applyDocFeatures
 
       case Token::Kind::Image: {
         auto img = makeImage(t);

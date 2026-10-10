@@ -19,12 +19,12 @@
 // ---- release consistency check ----
 #ifndef PDFGEN_MARKUP_API
 #error "stale markup.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_MARKUP_API != 20
+#elif PDFGEN_MARKUP_API != 21
 #error "version mismatch in markup.h: replace ALL pdfgen source files from the same release."
 #endif
 #ifndef PDFGEN_FLOWABLES_API
 #error "stale flowables.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_FLOWABLES_API != 13
+#elif PDFGEN_FLOWABLES_API != 14
 #error "version mismatch in flowables.h: replace ALL pdfgen source files from the same release."
 #endif
 
@@ -917,21 +917,43 @@ std::string expandMergeJson(const std::vector<std::string>& lines,
       continue;
     }
 
-    // ---- \segment Name: Textbaustein definieren ODER einsetzen ----
-    if (low.rfind("\\segment", 0) == 0 &&
-        (t.size() == 8 || t[8] == ' ' || t[8] == '\t')) {
-      std::string name = trim(mergeSubst(trim(t.substr(8)), ctx));
+    // ---- \stamp Name (alias \segment): Baustein definieren/einsetzen ----
+    // Definition: \stamp Name ... \\stamp  (wird NICHT gezeichnet);
+    // mit ", render" wird sie zusaetzlich an Ort und Stelle gestempelt.
+    // Einsetzen: nackte Zeile \stamp Name.
+    std::string sgword;
+    for (const char* w : { "stamp", "segment" }) {
+      size_t wl = std::strlen(w);
+      if (low.size() > wl && low[0] == '\\' && low.compare(1, wl, w) == 0 &&
+          (low.size() == wl + 1 || low[wl + 1] == ' ' || low[wl + 1] == '\t'))
+        { sgword = w; break; }
+    }
+    if (!sgword.empty()) {
+      std::string rest0 = trim(t.substr(sgword.size() + 1));
+      bool renderFlag = false;
+      {
+        size_t c = rest0.find(',');
+        if (c != std::string::npos) {
+          std::string fl = toLower(trim(rest0.substr(c + 1)));
+          if (fl == "render" || fl == "zeichnen") {
+            renderFlag = true;
+            rest0 = trim(rest0.substr(0, c));
+          }
+        }
+      }
+      std::string name = trim(mergeSubst(rest0, ctx));
       // Definition oder Verwendung? Kommt als NAECHSTES segment-Tag ein
       // \\segment (Schliesser), ist dies eine DEFINITION mit Inhalt.
       size_t close = 0;
       bool isDef = false;
       for (size_t j = li + 1; j < to; ++j) {
         std::string et = toLower(trim(lines[j]));
-        if (et == "\\\\segment") { close = j; isDef = true; break; }
-        if (et.rfind("\\segment", 0) == 0) break;         // naechste Nutzung
+        if (et == "\\\\segment" || et == "\\\\stamp") { close = j; isDef = true; break; }
+        if (et.rfind("\\segment", 0) == 0 || et.rfind("\\stamp", 0) == 0)
+          break;                                   // naechste Nutzung
       }
       if (name.empty()) {
-        warnings.push_back("\\segment braucht einen Namen");
+        warnings.push_back("\\" + sgword + " braucht einen Namen");
         if (isDef) li = close;
         continue;
       }
@@ -940,16 +962,22 @@ std::string expandMergeJson(const std::vector<std::string>& lines,
         for (size_t j = li + 1; j < close; ++j) body.push_back(lines[j]);
         ctx.segments[name] = body;                 // Ueberschreiben erlaubt
         li = close;
+        if (renderFlag) {                          // ", render": auch stempeln
+          auto& b = ctx.segments[name];
+          ctx.segExpanding.insert(name);
+          out += expandMergeJson(b, 0, b.size(), ctx, baseDir, warnings);
+          ctx.segExpanding.erase(name);
+        }
         continue;
       }
       auto it = ctx.segments.find(name);           // Verwendung
       if (it == ctx.segments.end()) {
-        warnings.push_back("\\segment " + name + ": nicht definiert");
+        warnings.push_back("\\" + sgword + " " + name + ": nicht definiert");
         emit(lines[li]);
         continue;
       }
       if (ctx.segExpanding.count(name)) {
-        warnings.push_back("\\segment " + name + ": zyklische Verwendung");
+        warnings.push_back("\\" + sgword + " " + name + ": zyklische Verwendung");
         continue;
       }
       ctx.segExpanding.insert(name);
@@ -1158,11 +1186,16 @@ std::string expandMailMerge(const std::string& text, const std::string& baseDir,
   std::string t = markup::translateBracketTags(text);
   if (t.find("\\mloop") != std::string::npos)
     t = markup::expandMergeTextLoops(t, baseDir, warnings);
-  if (t.find("\\jloop") == std::string::npos &&
-      t.find("\\jload") == std::string::npos &&
-      t.find("\\virtual") == std::string::npos &&
-      t.find('$') == std::string::npos)
-    return t;
+  {
+    bool trigger = t.find('$') != std::string::npos;
+    if (!trigger)
+      for (const char* w : { "\\jloop", "\\jload", "\\jread", "\\virtual",
+                             "\\json", "\\txt", "\\text", "\\data",
+                             "\\list", "\\nb", "\\stamp", "\\segment",
+                             "\\render", "\\dynamic" })
+        if (t.find(w) != std::string::npos) { trigger = true; break; }
+    if (!trigger) return t;
+  }
   std::vector<std::string> lines;
   {
     std::stringstream ss(t);
@@ -1276,7 +1309,26 @@ Project parseProject(const std::string& text, const std::string& baseDir,
           m.baseDir = baseDir;
           if (auto* v = opt(tag, "to"))         m.to = splitWs(*v);
           if (auto* v = opt(tag, "cc"))         m.cc = splitWs(*v);
-          if (auto* v = opt(tag, "attachment")) m.attachments = splitWs(*v);
+          if (auto* v = opt(tag, "attachment")) {
+            // GENAU EIN '>' im Wert = GENAU EIN Anhang "pfad>Anzeigename"
+            // (der Name darf Leerzeichen enthalten); sonst Leerzeichen-
+            // Liste, in der einzelne Eintraege pfad>Name sein duerfen.
+            size_t gt1 = v->find('>');
+            if (gt1 != std::string::npos && v->find('>', gt1 + 1) == std::string::npos) {
+              m.attachments = {trim(v->substr(0, gt1))};
+              m.attachNames = {trim(v->substr(gt1 + 1))};
+            } else {
+              m.attachments = splitWs(*v);
+              m.attachNames.assign(m.attachments.size(), "");
+              for (size_t ai = 0; ai < m.attachments.size(); ++ai) {
+                size_t gt = m.attachments[ai].find('>');
+                if (gt != std::string::npos) {
+                  m.attachNames[ai] = trim(m.attachments[ai].substr(gt + 1));
+                  m.attachments[ai] = trim(m.attachments[ai].substr(0, gt));
+                }
+              }
+            }
+          }
           if (auto* v = opt(tag, "test"))       m.testAddr = *v;
           if (auto* v = opt(tag, "from"))       m.from = *v;   // Absenderkonto
           if (auto* v = opt(tag, "format"))     { const std::string f = toLower(*v); m.html = f == "html"; if (f != "html" && f != "text" && !f.empty()) warnings.push_back("[mail] format=" + *v + ": use text or html"); }
@@ -1296,7 +1348,20 @@ Project parseProject(const std::string& text, const std::string& baseDir,
           } else {
             bool found = false;
             for (auto& m : prj.mails)
-              if (m.name == *mn) { m.attachments.push_back(*fp); found = true; }
+              if (m.name == *mn) {
+                std::string fpath = *fp, fname;
+                size_t gt = fpath.find('>');
+                if (gt != std::string::npos) {     // "pfad>Anzeigename"
+                  fname = trim(fpath.substr(gt + 1));
+                  fpath = trim(fpath.substr(0, gt));
+                }
+                if (auto* an = opt(tag, "as"))     fname = *an;
+                else if (auto* an2 = opt(tag, "als")) fname = *an2;
+                m.attachments.push_back(fpath);
+                m.attachNames.resize(m.attachments.size() - 1, "");
+                m.attachNames.push_back(fname);
+                found = true;
+              }
             if (!found)
               warnings.push_back("[attach]: no mail named '" + *mn + "' defined (yet)");
           }
@@ -1390,7 +1455,10 @@ bool renderDocument(const std::string& baseDir, const std::string& sourceText,
   raw = markup::expandDates(raw, opt, warnings);
   headerTxt = markup::expandDates(headerTxt, opt, warnings);
   footerTxt = markup::expandDates(footerTxt, opt, warnings);
+  markup::DocFeatures feats;
+  raw = markup::extractRegisters(raw, feats, warnings);
   auto tokens = markup::tokenize(raw, opt, warnings);
+  if (feats.active()) markup::applyDocFeatures(tokens, feats, warnings);
 
   std::string docName = outPdfPath;
   {
@@ -1412,19 +1480,23 @@ bool renderDocument(const std::string& baseDir, const std::string& sourceText,
       return markup::buildFlowables(dtokens, baseDir, dw, nullptr);
     };
     doc.setDecor(std::move(decor));
-    for (auto& f : markup::buildFlowables(tokens, baseDir, warnings, &ctx))
+    for (auto& f : markup::buildFlowables(tokens, baseDir, warnings, &ctx,
+                                          &feats))
       doc.add(std::move(f));
     doc.build();
     return doc.totalPagesRendered();
   };
 
-  // [pages] needs the final page count -> counting pass first
+  // [pages] needs the final page count, \toc & Co. the pages of their
+  // destinations -> counting pass first
   auto lowAll = toLower(headerTxt + footerTxt);
-  bool needTwoPass = lowAll.find("[pages]") != std::string::npos;
+  bool needTwoPass = lowAll.find("[pages]") != std::string::npos ||
+                     feats.active();
   int total = 0;
   if (needTwoPass) {
     Writer counting;
     total = runPass(0, counting);
+    feats.pages = counting.destPages();            // \toc page numbers
   }
   Writer writer;
   runPass(total, writer);

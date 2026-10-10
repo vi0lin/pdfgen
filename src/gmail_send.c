@@ -32,7 +32,7 @@
 /* release consistency check (see gmail_send.h) */
 #ifndef PDFGEN_GMAIL_SEND_API
 #error "stale gmail_send.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_GMAIL_SEND_API != 5
+#elif PDFGEN_GMAIL_SEND_API != 6
 #error "version mismatch in gmail_send.h: replace ALL pdfgen source files from the same release."
 #endif
 
@@ -62,10 +62,12 @@ int send_mail_ex(const smtp_transport *tr,
                  const char **cc,   int n_cc,
                  const char *subject,
                  const char *body_text,
-                 const char **files, int n_files)
+                 const char **files, int n_files,
+                 const char **names)
 {
     return send_mail_html(tr, from, password, to, n_to, cc, n_cc, subject,
-                          body_text, NULL, NULL, NULL, 0, files, n_files);
+                          body_text, NULL, NULL, NULL, 0, files, n_files,
+                          names);
 }
 
 /* HTML-Variante: body_html != NULL -> multipart/alternative (Text + HTML);
@@ -80,7 +82,8 @@ int send_mail_html(const smtp_transport *tr,
                    const char *body_text,
                    const char *body_html,
                    const char **inline_cids, const char **inline_files, int n_inline,
-                   const char **files, int n_files)
+                   const char **files, int n_files,
+                   const char **names)
 {
     int i;
     char url[512];
@@ -230,7 +233,10 @@ int send_mail_html(const smtp_transport *tr,
         const char *b1 = strrchr(files[i], '/');
         const char *b2 = strrchr(files[i], '\\');
         const char *base = b1 > b2 ? b1 : b2;
-        curl_mime_filename(part, base ? base + 1 : files[i]);
+        if (names && names[i] && names[i][0])
+            curl_mime_filename(part, names[i]);    /* Anzeigename in der Mail */
+        else
+            curl_mime_filename(part, base ? base + 1 : files[i]);
         curl_mime_encoder(part, "base64");
         /* Optional: set an explicit type, otherwise it's guessed:
            curl_mime_type(part, "application/pdf"); */
@@ -284,7 +290,7 @@ int send_mail(const char *from,
               const char **files, int n_files)
 {
     return send_mail_ex(NULL, from, password, to, n_to, cc, n_cc,
-                        subject, body_text, files, n_files);
+                        subject, body_text, files, n_files, NULL);
 }
 
 int send_test_mail(const char* attachment)

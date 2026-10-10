@@ -7,7 +7,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_FLOWABLES_API 13
+#define PDFGEN_FLOWABLES_API 14
 #include <functional>
 #include <algorithm>   // std::max (nie auf transitive Includes verlassen)
 #include <memory>
@@ -85,6 +85,9 @@ public:
 // setLineBoxes() -- that's how FloatFlow makes text wrap around an image.
 class Paragraph : public Flowable {
 public:
+  // Internal jump target: at draw time the paragraph registers this named
+  // destination at its top edge (\toc, Glossar, Abbildungen).
+  void setDestName(const std::string& n) { destName_ = n; }
   Paragraph(std::string utf8Markup, Style style);
   double wrap(double width) override;
   void   draw(Writer& w, double x, double yTop) override;
@@ -112,6 +115,7 @@ private:
                 double boxWidth; double xOff; bool hasUni; };
 
   Style style_;
+  std::string destName_;             // named destination set at draw time
   std::vector<std::string> links_;   // URLs referenced by Frag::link
   std::vector<Word> words_;      // built once in ctor
   std::vector<Line> lines_;      // rebuilt by wrap()
@@ -183,6 +187,30 @@ private:
   double dx_ = 0, dy_ = 0;
   bool absolute_ = false, backLayer_ = false;
   double absX_ = 0, absY_ = 0;
+};
+
+// Table of contents / register listing: rows of [number] [title]
+// [dot leader] [page], the whole row a clickable internal jump. Used by
+// \toc and the Abbildungs-/Zitat-/Glossar-Verzeichnisse.
+class TocFlow : public Flowable {
+public:
+  struct Entry {
+    std::string num;        // "1.2.1" or "" (unnumbered)
+    std::string title;      // display text (UTF-8)
+    std::string dest;       // named destination (without '#')
+    int page = 0;           // visible page number; <=0 = not known yet
+    int level = 1;          // 1..5, indents the title column
+  };
+  explicit TocFlow(std::vector<Entry> e) : entries_(std::move(e)) {}
+  double wrap(double width) override;
+  void draw(Writer& w, double x, double yTop) override;
+  std::unique_ptr<Flowable> splitTop(double width, double availHeight) override;
+  FlowPtr cloneFlow() const override { return FlowPtr(new TocFlow(*this)); }
+
+private:
+  std::vector<Entry> entries_;
+  double width_ = 0;
+  static constexpr double kLead = 17.0;    // row height
 };
 
 // Horizontal rule (markdown --- / *** / ___): a thin gray line across the

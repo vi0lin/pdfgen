@@ -242,6 +242,10 @@ Codeblöcke zwischen drei Backticks bleiben wörtlich (Einrückung erhalten):
 
 \[Text\](url) und Autolinks in spitzen Klammern werden klickbar: [Beispiel-Link](https://example.com). Nur in .md-Dateien gilt zudem die Markdown-Zeilenlogik: einfache Umbrüche fließen zusammen, ein harter Umbruch braucht zwei Leerzeichen am Zeilenende — .txt behält die pdfgen-Regel (jeder Umbruch ist hart). Einzige echte Verhaltensänderung in .txt: eine Zeile aus nur Strichen/Sternen (ab drei) ist jetzt eine Trennlinie, und ein Stern/Minus mit Leerzeichen am Zeilenanfang beginnt eine Liste — wer das wörtlich braucht, nutzt \off oder den Backslash-Escape.
 
+## 17. Verzeichnisse: \toc, \abb, \cite, \glossar — und \stamp
+
+›\toc‹ (optional ›\toc Inhaltsverzeichnis‹ für eine unnummerierte Titelzeile) fügt ein Inhaltsverzeichnis ein: Nummern-, Titel- und Seitenspalte bündig über die volle Breite, Punktleader, jede Zeile springt klickbar zur Überschrift. Mit ›\toc‹ erhalten Überschriften verschachtelte Nummern (# → 1., ## → 1.1, ### → 1.2.1) — im Text wie im Verzeichnis; die Seitenzahlen stammen aus einem automatischen zweiten Layout-Lauf. ›\abb Titel‹ unter einem Bild erzeugt ›Abbildung 2.1: Titel‹ (kapitelbezogen), ein nacktes ›\abb‹ das Abbildungsverzeichnis. ›\cite Quelle‹ bzw. ›\glossar Begriff‹ plus Folgezeilen (bis Leerzeile oder nächste Definition) definieren Einträge; jedes Vorkommen der Phrase im Fließtext wird zum klickbaren Sprung in das Register, das ein nacktes ›\cite‹/›\glossar‹ als eigene Seiten einfügt — jedes Register mit eigenem, unnummeriertem \toc-Eintrag. Textbausteine heißen jetzt ›\stamp‹ (Alias ›\segment‹): Der Definitionsblock wird standardmäßig nicht gezeichnet; ›\stamp Name, render‹ … ›\\stamp‹ definiert UND stempelt sofort, eine nackte ›\stamp Name‹-Zeile stempelt später. E-Mail-Anhänge lassen sich umbenennen: ›\attach mail=M, file=intern.pdf, as=Bewerbung.pdf‹ oder ›attachment="intern.pdf>Schöner Name.pdf"‹.
+
 Damit ist jeder Tag einmal erklärt und vorgeführt. Diese Quelldatei selbst ist das beste Beispiel: einfach neben die eigene text.txt legen und nachschlagen.
 \pdfgen file=SyntaxTeil.pdf
 # Zweites Dokument aus derselben Quelle

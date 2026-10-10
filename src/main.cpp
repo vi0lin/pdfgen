@@ -61,7 +61,7 @@
 // ---- release consistency check ----
 #ifndef PDFGEN_PROJECT_API
 #error "stale project.h: replace ALL pdfgen source files from the same release."
-#elif PDFGEN_PROJECT_API != 6
+#elif PDFGEN_PROJECT_API != 7
 #error "version mismatch in project.h: replace ALL pdfgen source files from the same release."
 #endif
 
@@ -324,8 +324,14 @@ int main(int argc, char** argv) {
             int shown = 0;
             while (shown < 2 && std::getline(bs, bl))
               if (!bl.empty()) { printf("      | %.76s\n", bl.c_str()); ++shown; }
-            for (const auto& a : m->attachments)
-              printf("      Anhang: %s\n", a.c_str());
+            for (size_t ai = 0; ai < m->attachments.size(); ++ai) {
+              const char* an = ai < m->attachNames.size() &&
+                               !m->attachNames[ai].empty()
+                                   ? m->attachNames[ai].c_str() : nullptr;
+              if (an) printf("      Anhang: %s  (als %s)\n",
+                             m->attachments[ai].c_str(), an);
+              else printf("      Anhang: %s\n", m->attachments[ai].c_str());
+            }
           }
         } else {
           printf("  %-28s -> %s  %s\n", g.id.c_str(), g.file.c_str(),
@@ -348,8 +354,13 @@ int main(int argc, char** argv) {
       for (const auto& a : m.to) to += (to.empty() ? "" : " ") + a;
       printf("  %-18s an: %-34s Betreff: %s\n", m.name.c_str(), to.c_str(),
              m.subject.c_str());
-      for (const auto& att : m.attachments)
-        printf("  %-18s     Anhang: %s\n", "", att.c_str());
+      for (size_t ai = 0; ai < m.attachments.size(); ++ai) {
+        if (ai < m.attachNames.size() && !m.attachNames[ai].empty())
+          printf("  %-18s     Anhang: %s  (als %s)\n", "",
+                 m.attachments[ai].c_str(), m.attachNames[ai].c_str());
+        else
+          printf("  %-18s     Anhang: %s\n", "", m.attachments[ai].c_str());
+      }
       if (!m.from.empty())
         printf("  %-18s     von: %s\n", "", m.from.c_str());
     }

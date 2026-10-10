@@ -14,7 +14,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_PDFWRITER_API 7
+#define PDFGEN_PDFWRITER_API 8
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -88,7 +88,14 @@ public:
   // carries decor must not survive before a merged PDF.
   void discardCurrentOwnPage();
   // Clickable link rectangle on the CURRENT page (PDF user-space coords).
+  // A url starting with '#' is an INTERNAL jump to the destination of that
+  // name (see setDest); anything else becomes a URI action.
   void addLink(double x, double y, double w, double h, const std::string& url);
+  // Registers named destination `name` (lowercase letters/digits only) at
+  // height y on the CURRENT page, and records its visible page number.
+  void setDest(const std::string& name, double y);
+  int currentPageNumber() const;          // 1-based, counts merged pages too
+  const std::map<std::string, int>& destPages() const { return destPageNo_; }
 
   // Writes the whole document. Returns false on I/O error.
   bool save(const std::string& path);
@@ -107,10 +114,13 @@ private:
   double pageW_, pageH_;
   // page order: own content streams interleaved with imported pages
   struct Link { double x, y, w, h; std::string url; };
+  struct Dest { std::string name; int slot; double y; };
   struct Slot { int extDoc = -1; int extPage = -1;
                 std::string back; std::string content;
                 std::vector<Link> links; };
   std::vector<Slot> slots_;
+  std::vector<Dest> dests_;
+  std::map<std::string, int> destPageNo_;
   std::vector<std::unique_ptr<ImportedPdf>> externalDocs_;
   std::vector<ImageXObject> images_;
 

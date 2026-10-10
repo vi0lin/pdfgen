@@ -72,7 +72,7 @@
 // sources produce <basename>.pdf next to the source, e.g.
 // `pdfgen Example.txt` -> Example.pdf.
 #pragma once
-#define PDFGEN_PROJECT_API 6
+#define PDFGEN_PROJECT_API 7
 
 #include <string>
 #include <vector>
@@ -102,6 +102,10 @@ struct MailSpec {
   std::string name;
   bool selected = true;         // --gen mail.X: nur ausgewaehlte senden
   std::vector<std::string> to, cc, attachments;
+  std::vector<std::string> attachNames; // parallel zu attachments: Anzeige-
+                                        // name in der Mail ("" = Dateiname).
+                                        // Setzen per \attach ..., as=Name
+                                        // oder attachment="pfad>Name".
   std::string testAddr;         // for --mail-test
   std::string from;             // sender account ("" = default account)
   std::string subject, body;

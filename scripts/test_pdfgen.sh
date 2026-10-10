@@ -115,6 +115,28 @@ if command -v pdftotext >/dev/null 2>&1 && [ -s "$TMP/k/Bewerbung.pdf" ]; then
   echo "$T" | grep -q "Wert: 42" && echo "$T" | grep -q "J: A" && echo "$T" | grep -q "J: Z"     && ok "\\e-Variablen + jloop ueber \$Variable" || bad "\\e-Variablen"
 fi
 
+# ---- 2f) \toc + Register + \stamp + Anhang-Rename ---------------------------
+mkdir -p "$TMP/t"
+{
+  printf '\\toc Inhalt\n\n'
+  printf '\\glossar Begriff\nErklaerung des Begriffs.\n\n'
+  printf '# Eins\n\nText mit Begriff darin.\n\n\\abb Probebild\n\n'
+  printf '## Unter\n\nText.\n\n\\abb\n\\glossar\n'
+} > "$TMP/t/text.txt"
+"$BIN" "$TMP/t" >/dev/null 2>&1
+if command -v pdftotext >/dev/null 2>&1 && [ -s "$TMP/t/Bewerbung.pdf" ]; then
+  T=$(pdftotext "$TMP/t/Bewerbung.pdf" - 2>/dev/null)
+  echo "$T" | grep -q "1.1 Unter" && echo "$T" | grep -q "Abbildung 1.1: Probebild"     && echo "$T" | grep -q "Glossar"     && ok "\\toc-Nummerierung + \\abb + Glossar" || bad "\\toc/Register"
+  grep -q "/S /GoTo" "$TMP/t/Bewerbung.pdf" && ok "Interne Sprung-Links" || bad "GoTo-Links"
+fi
+mkdir -p "$TMP/s"
+printf '\\stamp G, render\nGestempelt\n\\\\stamp\n\\stamp G\n' > "$TMP/s/text.txt"
+"$BIN" "$TMP/s" >/dev/null 2>&1
+if command -v pdftotext >/dev/null 2>&1; then
+  C=$(pdftotext "$TMP/s/Bewerbung.pdf" - 2>/dev/null | grep -c "Gestempelt")
+  [ "$C" = "2" ] && ok "\\stamp render+Einsatz" || bad "\\stamp ($C)"
+fi
+
 # ---- 3) Mail-Konten-Aufloesung (sendet nichts) ------------------------------
 printf '[gmx]\nich@gmx.de\ntoken\n' > "$TMP/m.conf"
 "$BIN" -c "$TMP/m.conf" --mail-accounts 2>/dev/null | grep -q "mail.gmx.net:587" \

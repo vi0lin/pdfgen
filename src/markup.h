@@ -135,7 +135,7 @@
 // API version of this header. The .cpp files verify that all headers come
 // from the same release -- mixing files from different downloads otherwise
 // causes confusing "has no member" errors.
-#define PDFGEN_MARKUP_API 20
+#define PDFGEN_MARKUP_API 21
 #include <functional>
 #include <string>
 #include <vector>
@@ -154,9 +154,16 @@ struct Token {
                     CodeBlock,         // text = verbatim code (\n-separated)
                     HRule,             // markdown horizontal rule
                     Quote,             // markdown blockquote paragraph
-                    ListItem };        // level, text = "bullet\x07body"
+                    ListItem,          // level, text = "bullet\x07body"
+                    Toc,               // \toc placeholder
+                    AbbCaption,        // \abb Titel (numbered figure caption)
+                    AbbList,           // \abb        (Abbildungsverzeichnis)
+                    CiteList,          // \cite       (Zitatregister)
+                    GlossList };       // \glossar    (Glossar pages)
   Token() = default;
   Kind kind;
+  std::string dest;        // named destination for \toc/register jumps
+  bool nonum = false;      // heading outside the numbering (register pages)
   std::string text;        // Text: paragraph markup | Heading: title | Image: path
   int level = 0;           // Heading only (1..5)
   double widthPt  = -1;    // Image only, -1 = not given
@@ -179,6 +186,37 @@ struct Token {
   bool noBlank = false;                        // NewPage: skip on empty page
   double margins[4] = {-1, -1, -1, -1};        // MarginsChange: l r t b
 };
+
+// ---- document features: \toc, \abb, \cite, \glossar ------------------------
+// Collected per document; filled by extractRegisters (definitions) and
+// applyDocFeatures (numbering, dests), consumed by buildFlowables. Page
+// numbers arrive after the counting pass (Writer::destPages()).
+struct DocFeatures {
+  bool tocPresent = false;
+  bool hasAbb = false, hasCite = false, hasGloss = false;
+  struct Head { int level; std::string num, title, dest; };
+  std::vector<Head> heads;                 // in document order
+  struct Item { std::string num, phrase, dest; std::vector<std::string> body; };
+  std::vector<Item> abbs;                  // figure captions (body unused)
+  std::vector<Item> cites, gloss;          // register definitions
+  std::map<std::string, int> pages;        // dest -> visible page (pass 2)
+  bool active() const {
+    return tocPresent || hasAbb || hasCite || hasGloss ||
+           !cites.empty() || !gloss.empty();
+  }
+};
+
+// Pulls \cite/\glossar DEFINITIONS out of the text (entry = tag line with a
+// phrase + following lines up to a blank line or the next definition) and
+// turns \toc / bare \abb/\cite/\glossar / \abb Titel into tokenizer markers.
+std::string extractRegisters(const std::string& text, DocFeatures& feats,
+                             std::vector<std::string>& warnings);
+
+// After tokenize: numbers headings (when \toc is present), assigns named
+// destinations, numbers \abb captions per chapter, auto-links register
+// phrases in body text, and expands the register markers into pages.
+void applyDocFeatures(std::vector<Token>& tokens, DocFeatures& feats,
+                      std::vector<std::string>& warnings);
 
 struct Options {
   std::string pdfPath;     // output PDF path, used by [date, modified=1]
@@ -274,7 +312,8 @@ struct BuildContext {
 pdf::FlowList buildFlowables(const std::vector<Token>& tokens,
                              const std::string& baseDir,
                              std::vector<std::string>& warnings,
-                             const BuildContext* ctx = nullptr);
+                             const BuildContext* ctx = nullptr,
+                             const DocFeatures* feats = nullptr);
 
 // "3*cm", "40*mm", "1.5*inch", "12" (pt), "cm" (=1cm) → points; false if invalid.
 bool evalDimension(const std::string& expr, double& outPt);

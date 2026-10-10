@@ -10,12 +10,12 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_FLOWABLES_API
 #error "stale flowables.h: it lacks PDFGEN_FLOWABLES_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_FLOWABLES_API != 13
+#elif PDFGEN_FLOWABLES_API != 14
 #error "version mismatch in flowables.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_PDFWRITER_API
 #error "stale pdfwriter.h: it lacks PDFGEN_PDFWRITER_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_PDFWRITER_API != 7
+#elif PDFGEN_PDFWRITER_API != 8
 #error "version mismatch in pdfwriter.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_METRICS_API
@@ -272,6 +272,7 @@ double Paragraph::naturalWidth() const {  // override
 
 void Paragraph::draw(Writer& w, double x, double yTop) {
   if (wrappedWidth_ < 0) wrap(w.pageWidth());
+  if (!destName_.empty()) w.setDest(destName_, yTop + 6);
   std::ostringstream o;
   const double leading = style_.leading;
 
@@ -349,6 +350,77 @@ std::unique_ptr<Flowable> Paragraph::splitTop(double width, double availHeight) 
   lines_.erase(lines_.begin(), lines_.begin() + fit);
   wrappedWidth_ = width;                                   // remainder stays laid out
   return top;
+}
+
+// ---- TocFlow ---------------------------------------------------------------
+double TocFlow::wrap(double width) {
+  width_ = width;
+  return kLead * (double)entries_.size();
+}
+
+std::unique_ptr<Flowable> TocFlow::splitTop(double width, double availHeight) {
+  size_t fit = (size_t)(availHeight / kLead);
+  if (fit == 0 || fit >= entries_.size()) return nullptr;
+  std::vector<Entry> top(entries_.begin(), entries_.begin() + (long)fit);
+  entries_.erase(entries_.begin(), entries_.begin() + (long)fit);
+  (void)width;
+  return std::unique_ptr<Flowable>(new TocFlow(std::move(top)));
+}
+
+void TocFlow::draw(Writer& w, double x, double yTop) {
+  const Font f = Font::Helvetica;
+  const double size = 11.0;
+  // fixed columns so every row lines up: number column sized to the widest
+  // number present, page column to the widest page number
+  double numCol = 0, pageCol = 0;
+  for (const auto& e : entries_) {
+    std::string nb = utf8ToWinAnsi(
+        e.num.empty() ? ""
+        : e.num.find('.') == std::string::npos ? e.num + "." : e.num);
+    numCol = std::max(numCol, textWidth(f, nb, size));
+    std::string pb = e.page > 0 ? std::to_string(e.page) : "000";
+    pageCol = std::max(pageCol, textWidth(f, pb, size));
+  }
+  numCol += 14;                                     // gap after the number
+  const double dotW = textWidth(f, ".", size);
+  std::ostringstream o;
+  for (size_t i = 0; i < entries_.size(); ++i) {
+    const Entry& e = entries_[i];
+    double base = yTop - (double)i * kLead - 0.78 * kLead;
+    double indent = 0.0;                           // Spalten bleiben buendig
+    std::string num = utf8ToWinAnsi(
+        e.num.empty() ? ""
+        : e.num.find('.') == std::string::npos ? e.num + "." : e.num);
+    std::string title = utf8ToWinAnsi(e.title);
+    double titleX = x + indent + numCol;
+    double pageX = x + width_ - pageCol;            // right edge column
+    // clip an overlong title so the leader always fits
+    double maxTitleW = pageX - 3 * dotW - 8 - titleX;
+    while (!title.empty() && textWidth(f, title, size) > maxTitleW)
+      title.pop_back();
+    double titleW = textWidth(f, title, size);
+    // dot leader from title end to the page column, dots aligned per row
+    std::string dots;
+    double leadStart = titleX + titleW + 4;
+    double leadEnd = pageX - 4;
+    int n = (int)((leadEnd - leadStart) / dotW);
+    for (int k = 0; k < n; ++k) dots += '.';
+    auto tj = [&](double px, const std::string& bytes) {
+      o << "BT /" << fontResourceName(f) << " " << Writer::num(size)
+        << " Tf " << Writer::num(px) << " " << Writer::num(base)
+        << " Td (" << Writer::escapeString(bytes) << ") Tj ET\n";
+    };
+    if (!num.empty()) tj(x + indent, num);
+    if (!title.empty()) tj(titleX, title);
+    if (!dots.empty()) tj(leadStart + ((leadEnd - leadStart) - n * dotW), dots);
+    if (e.page > 0) {
+      std::string pb = std::to_string(e.page);
+      tj(x + width_ - textWidth(f, pb, size), pb);
+    }
+    if (!e.dest.empty())
+      w.addLink(x, base - 3, width_, kLead, "#" + e.dest);
+  }
+  w.content(o.str());
 }
 
 void HRuleFlow::draw(Writer& w, double x, double yTop) {

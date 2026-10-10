@@ -211,7 +211,8 @@ classic spellings `[tag=wert, ...]` keep working unchanged.
 | Datei lesen | `\file` … `\\file` / NEU: `\read` … `\\read` | `[file ...]`/`[read ...]` … `[/file]`/`[/read]` |
 | Merge-Schleifen | `\mloop`, `\jloop`, `\jload`, `\jread` | `[mloop ...]`, `[jloop ...]` … `[/jloop]`, `[jload ...]`, `[jread ...]` |
 | Virtuelle Datei | `\virtual name` … `\\virtual`; Aliasse `\json`, `\txt`, `\text`, `\data`, `\list`, `\nb` | `[virtual name]` … `[/virtual]` (Aliasse ebenso) |
-| Textbaustein | `\segment Name` (… `\\segment`) | `[segment Name]` (… `[/segment]`) |
+| Textbaustein/Stempel | `\stamp Name` (… `\\stamp`; Alias `\segment`) | `[stamp Name]` (… `[/stamp]`) |
+| Verzeichnisse | `\toc (Titel)`, `\abb (Titel)`, `\cite (Eintrag)`, `\glossar (Eintrag)` | `[toc]`, `[abb …]`, `[cite …]`, `[glossar …]` |
 | Dynamische Datei | `\render name` … `\\render`; Aliasse `\dynamic`, `\dynamicfile`, `\d` | `[render name]` … `[/render]` (Aliasse ebenso) |
 | Literal-Klammern | `\[` `\]` | — |
 
@@ -239,7 +240,7 @@ Ohne eigene Backslash-Form (reine Inline-Platzhalter): `[date, ...]`,
 | `\off` / `\on` | parsing off/on — see *verbatim mode* below |
 | `\loop` / `\file` | repeat over data files — see below |
 | `\virtual datei.txt` … `\\virtual` (aliases: `\json`, `\txt`, `\text`, `\data`) | VIRTUAL FILE: registers the lines in between under that name — every reader (`\loop`/`\file`/`\mloop` data, `[includes]`, `\jloop`/`\jload` JSON, `@pools`) checks virtual files before the disk, so data can live inline in the same source. Content is stored verbatim (placeholders of the surrounding merge loop are filled in at definition time); the name may come from a variable (`\virtual $bewerbung`). Define before use. |
-| `\segment Name` … `\\segment` / `\segment Name` | TEXT SEGMENT (Baustein): the block form DEFINES (and redefines) the segment, a bare `\segment Name` line INSERTS it. Content is stored raw and substituted where it is used, so `$vars` inside a segment carry their current values. A segment is also addressable as `$Name` (and range-addressable, see below). |
+| `\stamp Name` … `\\stamp` / `\stamp Name` (alias `\segment`) | STAMP (Textbaustein): the block form DEFINES (and redefines) the stamp — by default it is NOT drawn there; add the `render` flag (`\stamp Name, render` … `\\stamp`) to define AND stamp it in place. A bare `\stamp Name` line stamps it. Content is stored raw and substituted where it is used, so `$vars` carry their current values; a stamp is also addressable as `$Name` (and range-addressable). |
 | `$name=wert` | VARIABLE: the line disappears, `$name` is substituted from here on — in text AND in every tag parameter (`\pdfgen file=Bewerbung-$heading-$#.pdf`, `\mail to=$to`, `[tags]` too). A variable overwritten inside a block tag (`\c`…`\\c`, `\mail`…`\\mail`, a `\jloop` iteration, `\virtual`) gets its previous value back when the block ends. Unknown `$names` stay literal. |
 | `\mloop` / `\jloop` / `\jload` | mail merge over text/JSON lists — see *Mail merge* below |
 | `\[` `\]` | literal square brackets, never interpreted anywhere |
@@ -593,6 +594,13 @@ $sig
 \\jloop
 ```
 
+**Renaming attachments:** the file may carry a different name INSIDE the
+mail: `\attach mail=M, file=Intern-0815.pdf, as=Bewerbung Nachname.pdf`
+or `attachment="Intern-0815.pdf>Bewerbung Nachname.pdf"` (exactly one `>`
+in the value = exactly one attachment, so the display name may contain
+spaces; several renamed attachments = several `\attach` lines). The
+listings show `Anhang: pfad (als Name)`.
+
 Quote file names that contain variables with spaces (`file="…$heading…"`),
 since `to=`/`attachment=` lists split on spaces outside quotes. `\\mail`
 ends a mail body explicitly (otherwise the next tag does).
@@ -704,6 +712,28 @@ Both sides may hold placeholders (`filter=$k.email=$_`). Conditions
 without `$` (`embedded`, `!embedded`) keep working unchanged.
 Merge substitution is a PREPROCESSOR: it also fills placeholders inside
 later `\off` blocks and data read by `\loop` stays verbatim.
+
+## Document features: \toc, \abb, \cite, \glossar
+
+`\toc` (optional `\toc Inhaltsverzeichnis` for an unnumbered, unlisted
+heading above it) inserts a TABLE OF CONTENTS: number column, title column
+and right-aligned page numbers kept strictly flush over the full text
+width, dot leaders in between, and every row a CLICKABLE jump to its
+heading. With `\toc` present, headings get NESTED NUMBERING in the text
+and the TOC (`#` → `1.`, `##` → `1.1`, `###` → `1.2.1`, …). Page numbers
+come from an automatic second layout pass.
+
+`\abb Titel` under a figure renders a numbered caption — `Abbildung 2.1:
+Titel`, chapter-aware when numbering is active — and a bare `\abb` inserts
+the ABBILDUNGSVERZEICHNIS (own unnumbered TOC entry, rows jump to the
+captions).
+
+`\cite Quelle` + following lines (up to a blank line or the next
+definition) defines a citation; `\glossar Begriff` + lines defines a
+glossary entry. Every occurrence of the phrase in body text becomes a
+clickable jump to its register entry. A bare `\cite` / `\glossar` inserts
+the ZITATREGISTER / GLOSSAR pages (entries carry jump targets, each
+register gets its own unnumbered TOC entry).
 
 ## Page breaks, comments, row spacing
 

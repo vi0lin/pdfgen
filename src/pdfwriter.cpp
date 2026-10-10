@@ -14,7 +14,7 @@
 // ---- release consistency check (see header comment) ----
 #ifndef PDFGEN_PDFWRITER_API
 #error "stale pdfwriter.h: it lacks PDFGEN_PDFWRITER_API. Replace ALL pdfgen source files from the same release (delete the old src/ first), then wipe the CMake build directory."
-#elif PDFGEN_PDFWRITER_API != 7
+#elif PDFGEN_PDFWRITER_API != 8
 #error "version mismatch in pdfwriter.h: replace ALL pdfgen source files from the same release and wipe the build directory."
 #endif
 #ifndef PDFGEN_TTFFONT_API
@@ -71,6 +71,21 @@ void Writer::addLink(double x, double y, double w, double h,
                      const std::string& url) {
   if (slots_.empty() || slots_.back().extDoc >= 0 || url.empty()) return;
   slots_.back().links.push_back({x, y, w, h, url});
+}
+
+void Writer::setDest(const std::string& name, double y) {
+  if (slots_.empty() || name.empty()) return;
+  dests_.push_back({name, (int)slots_.size() - 1, y});
+  destPageNo_[name] = currentPageNumber();
+}
+
+int Writer::currentPageNumber() const {
+  int n = 0;
+  for (size_t si = 0; si + 1 < slots_.size(); ++si)
+    if (slots_[si].extDoc >= 0 || !slots_[si].content.empty() ||
+        !slots_[si].back.empty())
+      ++n;
+  return n + 1;                                    // current slot counts
 }
 
 void Writer::discardCurrentOwnPage() {
@@ -304,6 +319,7 @@ bool Writer::buildDocument(std::string& result) {
     if (slots_[si].extDoc >= 0 || !slots_[si].content.empty() ||
         !slots_[si].back.empty())
       lastUsed = si;
+  std::map<size_t, int> slotPageObj;
   for (size_t si = 0; si < slots_.size(); ++si) {
     const Slot& sl = slots_[si];
     if (sl.extDoc >= 0) {
@@ -328,8 +344,12 @@ bool Writer::buildDocument(std::string& result) {
         std::ostringstream a;
         a << "<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect ["
           << num(lk.x) << " " << num(lk.y) << " " << num(lk.x + lk.w) << " "
-          << num(lk.y + lk.h) << "] /A << /Type /Action /S /URI /URI ("
-          << escapeString(lk.url) << ") >> >>";
+          << num(lk.y + lk.h) << "] /A << /Type /Action ";
+        if (!lk.url.empty() && lk.url[0] == '#')
+          a << "/S /GoTo /D /" << lk.url.substr(1);   // benannte Destination
+        else
+          a << "/S /URI /URI (" << escapeString(lk.url) << ")";
+        a << " >> >>";
         an << addObject(objs, a.str()) << " 0 R ";
       }
       an << "]";
@@ -339,7 +359,9 @@ bool Writer::buildDocument(std::string& result) {
     pg << "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "
        << num(pageW_) << " " << num(pageH_) << "] "
        << res.str() << " /Contents " << contentNum << " 0 R" << annots << " >>";
-    pageObjNums.push_back(addObject(objs, pg.str()));
+    int pgObj = addObject(objs, pg.str());
+    pageObjNums.push_back(pgObj);
+    slotPageObj[si] = pgObj;
   }
 
   {
@@ -348,6 +370,21 @@ bool Writer::buildDocument(std::string& result) {
     for (int n : pageObjNums) pgs << n << " 0 R ";
     pgs << "] >>";
     objs[pagesObjIdx - 1].body = pgs.str();
+  }
+
+  if (!dests_.empty()) {                           // old-style named dests
+    std::ostringstream dd;
+    dd << "<< ";
+    for (const auto& d : dests_) {
+      auto it = slotPageObj.find((size_t)d.slot);
+      if (it == slotPageObj.end()) continue;
+      dd << "/" << d.name << " [" << it->second << " 0 R /XYZ 0 "
+         << num(d.y) << " 0] ";
+    }
+    dd << ">>";
+    int destsObj = addObject(objs, dd.str());
+    objs[0].body = "<< /Type /Catalog /Pages 2 0 R /Dests " +
+                   std::to_string(destsObj) + " 0 R >>";
   }
 
   // serialize with xref

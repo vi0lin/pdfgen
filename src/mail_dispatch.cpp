@@ -66,9 +66,11 @@ int sendMail(const project::MailSpec& m, bool testRun) {
   PDFGEN_LOGD("mail '%s': %s:%d %s%s", m.name.c_str(), tr.host.c_str(),
               tr.port, tr.ssl ? "smtps" : "starttls",
               tr.xoauth2 ? " xoauth2" : "");
+  std::vector<std::string> attachNames = m.attachNames;
+  attachNames.resize(attachments.size(), "");
   int rc = m.bodyHtml.empty()
-         ? pdfgen_mail::send(tr, acc->address, acc->token, to, cc, subject, m.body, attachments)
-         : pdfgen_mail::sendHtml(tr, acc->address, acc->token, to, cc, subject, m.body, m.bodyHtml, m.inlineImages, attachments);
+         ? pdfgen_mail::send(tr, acc->address, acc->token, to, cc, subject, m.body, attachments, attachNames)
+         : pdfgen_mail::sendHtml(tr, acc->address, acc->token, to, cc, subject, m.body, m.bodyHtml, m.inlineImages, attachments, attachNames);
   if (rc == 0) PDFGEN_LOGI("mail '%s': gesendet (von %s)", m.name.c_str(),
                            acc->address.c_str());
   else         PDFGEN_LOGE("mail '%s': Versand fehlgeschlagen", m.name.c_str());
